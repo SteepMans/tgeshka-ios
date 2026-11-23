@@ -3,9 +3,11 @@ name: TGeshka
 # Apple builds run only on demand: a push of a tag vX.Y.Z builds the signed IPA and uploads it to TestFlight;
 # workflow_dispatch with mode=check builds the app for the simulator without signing (compile check, used for
 # upstream update PRs) and takes a screenshot of the first screen.
+# A push to main builds both configurations without upload: tags and PR branches can only restore caches of main.
 on:
   push:
     tags: ['v*']
+    branches: [main]
   workflow_dispatch:
     inputs:
       mode:
@@ -18,16 +20,19 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: tgeshka-${{ github.ref }}-${{ inputs.mode || 'release' }}
-  cancel-in-progress: false
-
 jobs:
   build:
     runs-on: xcode-27
     timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: ${{ fromJSON(github.ref == 'refs/heads/main' && github.event_name == 'push' && '["check","release"]' || format('["{0}"]', inputs.mode || 'release')) }}
+    concurrency:
+      group: tgeshka-${{ github.ref }}-${{ matrix.mode }}
+      cancel-in-progress: false
     env:
-      MODE: ${{ inputs.mode || 'release' }}
+      MODE: ${{ matrix.mode }}
       BUNDLE_ID: ru.tgeshka.app
       APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
