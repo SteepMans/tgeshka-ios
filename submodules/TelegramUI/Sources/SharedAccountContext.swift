@@ -2513,7 +2513,7 @@ public final class SharedAccountContextImpl: SharedAccountContext {
     }
     
     public func makeProxySettingsController(context: AccountContext) -> ViewController {
-        return proxySettingsController(context: context)
+        return tgeshkaSettingsController(context: context)
     }
     
     public func makeLocalizationListController(context: AccountContext) -> ViewController {
@@ -4517,7 +4517,9 @@ public final class SharedAccountContextImpl: SharedAccountContext {
     }
         
     public func makeProxySettingsController(sharedContext: SharedAccountContext, account: UnauthorizedAccount) -> ViewController {
-        return proxySettingsController(accountManager: sharedContext.accountManager, sharedContext: sharedContext, network: account.network, mode: .modal, presentationData: sharedContext.currentPresentationData.with { $0 }, updatedPresentationData: sharedContext.presentationData)
+        // TGeshka: the gateway screen instead of the proxy list.
+        let _ = account
+        return tgeshkaSettingsController(sharedContext: sharedContext, presentationData: sharedContext.currentPresentationData.with { $0 }, updatedPresentationData: sharedContext.presentationData, firstRun: false)
     }
     
     public func makeDataAndStorageController(context: AccountContext, sensitiveContent: Bool) -> ViewController {

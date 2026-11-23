@@ -175,24 +175,10 @@ func settingsItems(data: PeerInfoScreenData?, context: AccountContext, presentat
             }))
         }
         
-        if !settings.proxySettings.servers.isEmpty {
-            let proxyType: String
-            if settings.proxySettings.enabled, let activeServer = settings.proxySettings.activeServer {
-                switch activeServer.connection {
-                case .mtp:
-                    proxyType = presentationData.strings.SocksProxySetup_ProxyTelegram
-                case .web:
-                    proxyType = presentationData.strings.SocksProxySetup_ProxyWeb
-                case .socks5:
-                    proxyType = presentationData.strings.SocksProxySetup_ProxySocks5
-                }
-            } else {
-                proxyType = presentationData.strings.Settings_ProxyDisabled
-            }
-            items[.proxy]!.append(PeerInfoScreenDisclosureItem(id: 0, label: .text(proxyType), text: presentationData.strings.Settings_Proxy, icon: PresentationResourcesSettings.proxy, action: {
-                interaction.openSettings(.proxy)
-            }))
-        }
+        // TGeshka: the gateway section takes the place of the proxy entry.
+        items[.proxy]!.append(PeerInfoScreenDisclosureItem(id: 0, label: .text(TGeshkaGateway.shared.hasKey ? "Шлюз" : "Нет ключа"), text: "TGeshka", icon: PresentationResourcesSettings.proxy, action: {
+            interaction.openSettings(.proxy)
+        }))
     }
     
     var appIndex = 1000

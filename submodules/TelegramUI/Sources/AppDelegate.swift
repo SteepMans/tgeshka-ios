@@ -1384,6 +1384,8 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
             }
         })
         
+        self.checkTGeshkaGatewayKey()
+        
         let contextReadyDisposable = MetaDisposable()
         
         let startTime = CFAbsoluteTimeGetCurrent()
@@ -2671,6 +2673,40 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
     }
     #endif
     
+    // TGeshka: gateway key screen, on the first launch (no key yet) and for tgeshka://gateway links.
+    private func presentTGeshkaGateway(sharedContext: SharedAccountContextImpl, context: AuthorizedApplicationContext?, authContext: UnauthorizedApplicationContext?, firstRun: Bool, prefilled: TGeshkaGatewaySettings?) {
+        let presentationData = sharedContext.currentPresentationData.with { $0 }
+        let controller = tgeshkaSettingsController(sharedContext: sharedContext, presentationData: presentationData, updatedPresentationData: sharedContext.presentationData, firstRun: firstRun, prefilled: prefilled)
+        controller.presentationArguments = ViewControllerPresentationArguments(presentationAnimation: .modalSheet)
+        if let context = context {
+            context.rootController.view.endEditing(true)
+        } else if let authContext = authContext {
+            authContext.rootController.view.endEditing(true)
+        }
+        self.mainWindow.present(controller, on: .root, blockInteraction: false, completion: {})
+    }
+
+    private func checkTGeshkaGatewayKey() {
+        if TGeshkaGateway.shared.hasKey {
+            return
+        }
+        let _ = (self.sharedContextPromise.get()
+        |> take(1)
+        |> mapToSignal { sharedApplicationContext -> Signal<(SharedAccountContextImpl, AuthorizedApplicationContext?, UnauthorizedApplicationContext?), NoError> in
+            combineLatest(self.context.get(), self.authContext.get())
+            |> filter { $0 != nil || $1 != nil }
+            |> take(1)
+            |> map { context, authContext -> (SharedAccountContextImpl, AuthorizedApplicationContext?, UnauthorizedApplicationContext?) in
+                return (sharedApplicationContext.sharedContext, context, authContext)
+            }
+        }
+        |> deliverOnMainQueue).start(next: { sharedContext, context, authContext in
+            if !TGeshkaGateway.shared.hasKey {
+                self.presentTGeshkaGateway(sharedContext: sharedContext, context: context, authContext: authContext, firstRun: true, prefilled: nil)
+            }
+        })
+    }
+
     private func openUrl(url: URL) {
         let _ = (self.sharedContextPromise.get()
         |> take(1)
@@ -2683,6 +2719,10 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
             }
         }
         |> deliverOnMainQueue).start(next: { sharedContext, context, authContext in
+            if let gatewaySettings = TGeshkaGateway.parseLink(url) {
+                self.presentTGeshkaGateway(sharedContext: sharedContext, context: context, authContext: authContext, firstRun: !TGeshkaGateway.shared.hasKey, prefilled: gatewaySettings)
+                return
+            }
             if let authContext = authContext, let confirmationCode = parseConfirmationCodeUrl(sharedContext: sharedContext, url: url) {
                 authContext.rootController.applyConfirmationCode(confirmationCode)
             } else if let context = context {
