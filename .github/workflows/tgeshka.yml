@@ -1,0 +1,228 @@
+name: TGeshka
+
+# Apple builds run only on demand: a push of a tag vX.Y.Z builds the signed IPA and uploads it to TestFlight;
+# workflow_dispatch with mode=check builds the app for the simulator without signing (compile check, used for
+# upstream update PRs) and takes a screenshot of the first screen.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'check: simulator build and screenshot; release: signed IPA (upload only from a v* tag)'
+        required: true
+        type: choice
+        options: [check, release]
+        default: check
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tgeshka-${{ github.ref }}-${{ inputs.mode || 'release' }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: xcode-27
+    timeout-minutes: 340
+    env:
+      MODE: ${{ inputs.mode || 'release' }}
+      BUNDLE_ID: ru.tgeshka.app
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      DIST_CERT_ID: ${{ vars.DIST_CERT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          publish=false
+          if [ "$REF_TYPE" = "tag" ]; then
+            if ! printf '%s' "$REF_NAME" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "::error::Tag $REF_NAME is not vX.Y.Z"; exit 1
+            fi
+            version="${REF_NAME#v}"
+            [ "$MODE" = "release" ] && publish=true
+          else
+            version=0.0.1
+          fi
+          echo "APP_VERSION=$version" >> "$GITHUB_ENV"
+          echo "APP_BUILD=$((RUN_NUMBER + 100))" >> "$GITHUB_ENV"
+          echo "PUBLISH=$publish" >> "$GITHUB_ENV"
+          echo "Version $version, mode $MODE, upload $publish"
+
+      - name: Xcode
+        run: |
+          latest=$(ls -d /Applications/Xcode_27*.app 2>/dev/null | grep -v -i beta | sort -V | tail -1 || true)
+          if [ -n "$latest" ]; then sudo xcode-select -s "$latest/Contents/Developer"; fi
+          xcodebuild -version
+          df -h / | tail -1
+
+      - name: Build configuration
+        env:
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+          GATEWAY_URL: ${{ secrets.TGESHKA_GATEWAY_URL }}
+        run: |
+          set -euo pipefail
+          for name in TG_API_ID TG_API_HASH APPLE_TEAM_ID; do
+            [ -n "${!name}" ] || { echo "::error::$name is not set"; exit 1; }
+          done
+          mkdir -p "$RUNNER_TEMP/tg"
+          python3 - <<'PY'
+          import json, os
+          cfg = {
+              "bundle_id": os.environ["BUNDLE_ID"],
+              "api_id": os.environ["TG_API_ID"],
+              "api_hash": os.environ["TG_API_HASH"],
+              "team_id": os.environ["APPLE_TEAM_ID"],
+              "is_internal_build": "false",
+              "is_appstore_build": "false",
+              "appstore_id": "0",
+              "app_specific_url_scheme": "tg",
+              "premium_iap_product_id": "",
+              "enable_siri": False,
+              "enable_icloud": False,
+          }
+          with open(os.environ["RUNNER_TEMP"] + "/tg/configuration.json", "w") as f:
+              json.dump(cfg, f)
+          versions = json.load(open("versions.json"))
+          versions["app"] = os.environ["APP_VERSION"]
+          json.dump(versions, open("versions.json", "w"), indent=4)
+          url = os.environ.get("GATEWAY_URL", "").replace('"', '')
+          path = "submodules/TelegramCore/Sources/TGeshka/TGeshkaBuildDefaults.swift"
+          src = open(path).read().replace('static let gatewayUrl = ""', 'static let gatewayUrl = "%s"' % url)
+          open(path, "w").write(src)
+          PY
+
+      - name: Bazel cache
+        uses: actions/cache@v4
+        with:
+          path: ~/telegram-bazel-cache
+          key: bazel-${{ env.MODE }}-${{ hashFiles('versions.json', 'MODULE.bazel') }}-${{ github.sha }}
+          restore-keys: |
+            bazel-${{ env.MODE }}-${{ hashFiles('versions.json', 'MODULE.bazel') }}-
+            bazel-${{ env.MODE }}-
+
+      - name: Simulator build
+        if: env.MODE == 'check'
+        run: |
+          set -o pipefail
+          python3 build-system/Make/Make.py --overrideXcodeVersion --cacheDir ~/telegram-bazel-cache \
+            build \
+            --configurationPath "$RUNNER_TEMP/tg/configuration.json" \
+            --xcodeManagedCodesigning \
+            --disableProvisioningProfiles \
+            --buildNumber "$APP_BUILD" \
+            --configuration debug_sim_arm64 2>&1 | tee "$RUNNER_TEMP/build.log" | grep -E --line-buffered "error:|ERROR|FAILED|INFO: Build|Elapsed" || true
+          test -f bazel-bin/Telegram/Telegram.ipa || { tail -200 "$RUNNER_TEMP/build.log"; exit 1; }
+
+      - name: Simulator screenshot
+        if: env.MODE == 'check'
+        run: |
+          set -x
+          stage=$(mktemp -d)
+          unzip -q bazel-bin/Telegram/Telegram.ipa -d "$stage"
+          device=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next(x['udid'] for k,v in d.items() if 'iOS' in k for x in v if x['name'].startswith('iPhone')))")
+          xcrun simctl boot "$device" || true
+          xcrun simctl bootstatus "$device" -b
+          xcrun simctl install "$device" "$stage/Payload/Telegram.app"
+          xcrun simctl launch "$device" "$BUNDLE_ID"
+          sleep 25
+          mkdir -p shots
+          xcrun simctl io "$device" screenshot shots/first-screen.png
+          xcrun simctl spawn "$device" log show --last 2m --predicate 'process == "Telegram"' --style compact > shots/app.log 2>&1 || true
+          grep -c "GwWs" shots/app.log || true
+
+      - name: Upload screenshot
+        if: env.MODE == 'check' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulator
+          path: |
+            shots
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: ${{ runner.temp }}/build.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Signing
+        if: env.MODE == 'release'
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          DIST_CERT_P12: ${{ secrets.DIST_CERT_P12 }}
+          DIST_CERT_PASSWORD: ${{ secrets.DIST_CERT_PASSWORD }}
+        run: |
+          set -eo pipefail
+          for name in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 DIST_CERT_ID DIST_CERT_P12 DIST_CERT_PASSWORD; do
+            [ -n "${!name}" ] || { echo "::error::$name is not set"; exit 1; }
+          done
+          mkdir -p ~/.appstoreconnect/private_keys
+          key_path=~/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8
+          printf '%s\n' "$ASC_KEY_P8" | tr -d '\r' > "$key_path"
+          echo "ASC_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password=$(uuidgen)
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          printf '%s' "$DIST_CERT_P12" | tr -d '\r\n ' | base64 --decode > "$RUNNER_TEMP/dist.p12"
+          security import "$RUNNER_TEMP/dist.p12" -k "$keychain" -P "$DIST_CERT_PASSWORD" -f pkcs12 -A -t cert
+          for g in G3 G4 G5 G6; do
+            curl -fsSL -o "$RUNNER_TEMP/AppleWWDRCA$g.cer" "https://www.apple.com/certificateauthority/AppleWWDRCA$g.cer" \
+              && security import "$RUNNER_TEMP/AppleWWDRCA$g.cer" -k "$keychain" > /dev/null || true
+          done
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" "$HOME/Library/Keychains/login.keychain-db"
+          rm -f "$RUNNER_TEMP/dist.p12"
+          security find-identity -v -p codesigning "$keychain"
+          echo "KEYCHAIN_PATH=$keychain" >> "$GITHUB_ENV"
+
+          python3 -m pip install --quiet --break-system-packages pyjwt cryptography || python3 -m pip install --quiet pyjwt cryptography
+          mkdir -p "$RUNNER_TEMP/codesigning/certs"
+          python3 tgeshka/ci/fetch_profiles.py "$RUNNER_TEMP/codesigning"
+
+      - name: Release build
+        if: env.MODE == 'release'
+        run: |
+          set -o pipefail
+          python3 build-system/Make/Make.py --overrideXcodeVersion --cacheDir ~/telegram-bazel-cache \
+            build \
+            --configurationPath "$RUNNER_TEMP/tg/configuration.json" \
+            --codesigningInformationPath "$RUNNER_TEMP/codesigning" \
+            --buildNumber "$APP_BUILD" \
+            --configuration release_arm64 \
+            --outputBuildArtifactsPath "$RUNNER_TEMP/artifacts" 2>&1 | tee "$RUNNER_TEMP/build.log" | grep -E --line-buffered "error:|ERROR|FAILED|INFO: Build|Elapsed" || true
+          test -f "$RUNNER_TEMP/artifacts/Telegram.ipa" || { tail -200 "$RUNNER_TEMP/build.log"; exit 1; }
+          ls -la "$RUNNER_TEMP/artifacts"
+
+      - name: Upload to TestFlight
+        if: env.MODE == 'release' && env.PUBLISH == 'true'
+        run: |
+          set -eo pipefail
+          xcrun altool --upload-app --type ios --file "$RUNNER_TEMP/artifacts/Telegram.ipa" \
+            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID" --output-format normal
+          echo "Uploaded $APP_VERSION ($APP_BUILD)"
+
+      - name: Cleanup signing
+        if: always()
+        run: |
+          if [ -n "${KEYCHAIN_PATH:-}" ]; then security delete-keychain "$KEYCHAIN_PATH" || true; fi
+          rm -rf ~/.appstoreconnect "$RUNNER_TEMP/codesigning"
