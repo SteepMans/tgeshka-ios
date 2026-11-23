@@ -134,8 +134,8 @@ jobs:
             --configurationPath "$RUNNER_TEMP/tg/configuration.json" \
             --xcodeManagedCodesigning \
             --disableProvisioningProfiles \
-            --buildNumber "$APP_BUILD" \
-            --configuration debug_sim_arm64 2>&1 | tee "$RUNNER_TEMP/build.log" | grep -E --line-buffered "error:|ERROR|FAILED|INFO: Build|Elapsed" || true
+            --buildNumber 1 \
+            --configuration debug_sim_arm64 2>&1 | tee "$RUNNER_TEMP/build.log" | grep -E --line-buffered "error:|ERROR|FAILED|INFO: Build|Elapsed|processes:" || true
           test -f bazel-bin/Telegram/Telegram.ipa || { tail -200 "$RUNNER_TEMP/build.log"; exit 1; }
 
       - name: Simulator screenshot
@@ -166,7 +166,7 @@ jobs:
           retention-days: 14
 
       - name: Upload build log
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-log
@@ -222,7 +222,7 @@ jobs:
             --codesigningInformationPath "$RUNNER_TEMP/codesigning" \
             --buildNumber "$APP_BUILD" \
             --configuration release_arm64 \
-            --outputBuildArtifactsPath "$RUNNER_TEMP/artifacts" 2>&1 | tee "$RUNNER_TEMP/build.log" | grep -E --line-buffered "error:|ERROR|FAILED|INFO: Build|Elapsed" || true
+            --outputBuildArtifactsPath "$RUNNER_TEMP/artifacts" 2>&1 | tee "$RUNNER_TEMP/build.log" | grep -E --line-buffered "error:|ERROR|FAILED|INFO: Build|Elapsed|processes:" || true
           test -f "$RUNNER_TEMP/artifacts/Telegram.ipa" || { tail -200 "$RUNNER_TEMP/build.log"; exit 1; }
           ls -la "$RUNNER_TEMP/artifacts"
 
