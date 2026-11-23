@@ -77,7 +77,7 @@ public final class TGeshkaWebPush {
 
     /// The token for account.registerDevice(token_type: 10): {"endpoint", "keys": {"p256dh", "auth"}}.
     static func subscriptionToken(accountId: Int64, endpoint: String) -> String? {
-        guard let (key, auth) = keys(accountId: accountId) else {
+        guard case let (key, auth)? = keys(accountId: accountId) else {
             return nil
         }
         let object: [String: Any] = [
