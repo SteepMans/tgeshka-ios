@@ -2700,6 +2700,17 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
                 return (sharedApplicationContext.sharedContext, context, authContext)
             }
         }
+        |> mapToSignal { sharedContext, context, authContext -> Signal<(SharedAccountContextImpl, AuthorizedApplicationContext?, UnauthorizedApplicationContext?), NoError> in
+            // The sign-in screens are presented on .root once ready: wait for them, or they cover the key sheet.
+            guard let authContext = authContext, context == nil else {
+                return .single((sharedContext, context, authContext))
+            }
+            return authContext.isReady.get()
+            |> filter { $0 }
+            |> take(1)
+            |> delay(0.3, queue: Queue.mainQueue())
+            |> map { _ in (sharedContext, context, authContext) }
+        }
         |> deliverOnMainQueue).start(next: { sharedContext, context, authContext in
             if !TGeshkaGateway.shared.hasKey {
                 self.presentTGeshkaGateway(sharedContext: sharedContext, context: context, authContext: authContext, firstRun: true, prefilled: nil)
