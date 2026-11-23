@@ -444,6 +444,7 @@ plist_fragment(
                 <string>tonsite</string>
                 <string>ton</string>
                 <string>tc</string>
+                <string>tgeshka</string>
             </array>
         </dict>
     </array>
@@ -641,7 +642,7 @@ plist_fragment(
     template =
     """
     <key>CFBundleDisplayName</key>
-    <string>Telegram</string>
+    <string>TGeshka</string>
     """
 )
 
