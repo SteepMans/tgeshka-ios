@@ -87,7 +87,7 @@ public final class TGeshkaWebPush {
                 "auth": base64Url(auth)
             ]
         ]
-        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else {
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes]) else {
             return nil
         }
         return String(data: data, encoding: .utf8)
@@ -160,6 +160,38 @@ public final class TGeshkaWebPush {
                 session.finishTasksAndInvalidate()
             }
         }
+    }
+
+    /// Tells the relay how a step of the subscription went (Telegram's answer to
+    /// registerDevice and the like): the relay logs it next to the deliveries, so a push
+    /// that never comes can be told from a subscription Telegram refused. Fire and forget.
+    static func report(apnsToken: Data?, stage: String, result: String) {
+        let gateway = TGeshkaGateway.shared
+        let settings = gateway.settings
+        guard !settings.token.isEmpty, var components = URLComponents(string: gateway.effectiveUrl) else {
+            return
+        }
+        components.scheme = "https"
+        components.path = "/v1/push/report"
+        components.query = nil
+        guard let url = components.url else {
+            return
+        }
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20.0)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(settings.token)", forHTTPHeaderField: "Authorization")
+        request.setValue(TGeshkaGateway.clientHeader, forHTTPHeaderField: "X-TGeshka-Client")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var body: [String: Any] = ["stage": stage, "result": result]
+        if let apnsToken = apnsToken {
+            body["apns_token"] = apnsToken.map { String(format: "%02x", $0) }.joined()
+        }
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.connectionProxyDictionary = [:]
+        let session = URLSession(configuration: configuration)
+        session.dataTask(with: request, completionHandler: { _, _, _ in }).resume()
+        session.finishTasksAndInvalidate()
     }
 
     // MARK: Decryption
@@ -315,7 +347,14 @@ public final class TGeshkaWebPush {
     /// Web Push data comes as {"loc_key", "loc_args", "custom": {...}, "title",
     /// "description", ...}; the notification service reads the APNs shape
     /// ({"aps": {"alert": ...}, "loc-key", "msg_id", "from_id", ...}).
-    static func apnsShapedPayload(_ json: [String: Any]) -> [String: Any] {
+    static func apnsShapedPayload(_ object: [String: Any]) -> [String: Any] {
+        // The API docs show the notification wrapped as {"data": {...}}; accept both shapes.
+        let json: [String: Any]
+        if object["loc_key"] == nil, let data = object["data"] as? [String: Any] {
+            json = data
+        } else {
+            json = object
+        }
         var result: [String: Any] = [:]
         for (key, value) in json where key != "custom" {
             result[key] = value
