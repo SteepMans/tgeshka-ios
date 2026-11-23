@@ -188,6 +188,7 @@ jobs:
           mkdir -p ~/.appstoreconnect/private_keys
           key_path=~/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8
           printf '%s\n' "$ASC_KEY_P8" | tr -d '\r' > "$key_path"
+          export ASC_KEY_PATH="$key_path"
           echo "ASC_KEY_PATH=$key_path" >> "$GITHUB_ENV"
 
           keychain="$RUNNER_TEMP/signing.keychain-db"
