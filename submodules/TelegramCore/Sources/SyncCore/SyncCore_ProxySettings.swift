@@ -126,11 +126,8 @@ public struct ProxySettings: Codable, Equatable {
         try container.encode((self.useForCalls ? 1 : 0) as Int32, forKey: "useForCalls")
     }
     
+    // TGeshka: connections always go through the gateway, a user proxy is never used.
     public var effectiveActiveServer: ProxyServerSettings? {
-        if self.enabled, let activeServer = self.activeServer {
-            return activeServer
-        } else {
-            return nil
-        }
+        return nil
     }
 }

@@ -57,7 +57,7 @@ extension PeerInfoScreenNode {
         case .edit:
             self.performNavigationButtonAction?(.edit, nil, nil)
         case .proxy:
-            self.controller?.push(proxySettingsController(context: self.context))
+            self.controller?.push(tgeshkaSettingsController(context: self.context))
         case .profile:
             self.controller?.push(PeerInfoScreenImpl(
                 context: self.context,

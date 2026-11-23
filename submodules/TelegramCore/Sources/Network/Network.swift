@@ -598,6 +598,13 @@ func initializedNetwork(accountId: AccountRecordId, arguments: NetworkInitializa
                 }
             }
 
+            // TGeshka: every connection to a DC is a WebSocket to the gateway.
+            if #available(iOS 13.0, macOS 14.0, *) {
+                context.makeTcpConnectionInterface = { delegate, delegateQueue in
+                    return GatewayTcpConnectionInterface(delegate: delegate, delegateQueue: delegateQueue)
+                }
+            }
+
             let baseTcpConnectionInterfaceFactory = context.makeTcpConnectionInterface
             let isAppExtension = Bundle.main.bundlePath.hasSuffix(".appex")
             let initialActiveServer = proxySettings?.effectiveActiveServer
@@ -659,7 +666,9 @@ func initializedNetwork(accountId: AccountRecordId, arguments: NetworkInitializa
             #endif
             
             if !supplementary {
-                context.setDiscoverBackupAddressListSignal(MTBackupAddressSignals.fetchBackupIps(testingEnvironment, currentContext: context, additionalSource: wrappedAdditionalSource, phoneNumber: phoneNumber, mainDatacenterId: datacenterId))
+                // TGeshka: no backup address discovery (DNS-over-HTTPS to Google/Cloudflare,
+                // Firebase, iCloud): it would reach those services directly, past the gateway.
+                let _ = wrappedAdditionalSource
                 let externalRequestVerificationStream = arguments.externalRequestVerificationStream
                 context.setExternalRequestVerification({ nonce in
                     return MTSignal(generator: { subscriber in
@@ -707,6 +716,8 @@ func initializedNetwork(accountId: AccountRecordId, arguments: NetworkInitializa
                 rustDisabledReason = networkLivenessDisabledReason()
             }
             #endif
+            // TGeshka: the Rust engine opens its own sockets; only MtProtoKit goes through the gateway.
+            rustDisabledReason = "tgeshka gateway"
             let resolvedEngine = resolveNetworkEngine(accountId: accountId, context: context, factory: arguments.networkEngineFactory, settings: networkEngine.settings, rustDisabledReason: rustDisabledReason, isAppExtension: isAppExtension)
             resolvedEngine.activate()
             let rustEngineDisabled = rustDisabledReason != nil

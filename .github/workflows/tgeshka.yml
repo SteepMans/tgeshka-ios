@@ -104,14 +104,26 @@ jobs:
           open(path, "w").write(src)
           PY
 
-      - name: Bazel cache
-        uses: actions/cache@v4
+      # Bazel disk cache and repository cache only (not the output base). Saved after every build, failed ones too:
+      # actions/cache saves only on job success, and every failed run started cold.
+      - name: Restore Bazel cache
+        id: bazel-cache
+        uses: actions/cache/restore@v4
         with:
-          path: ~/telegram-bazel-cache
-          key: bazel-${{ env.MODE }}-${{ hashFiles('versions.json', 'MODULE.bazel') }}-${{ github.sha }}
+          path: |
+            ~/telegram-bazel-cache
+            ~/telegram-bazel-repo
+          key: bazel-${{ env.MODE }}-${{ hashFiles('versions.json', 'MODULE.bazel') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             bazel-${{ env.MODE }}-${{ hashFiles('versions.json', 'MODULE.bazel') }}-
             bazel-${{ env.MODE }}-
+
+      - name: Bazel settings
+        run: |
+          # Repository cache (downloaded archives) next to the disk cache.
+          echo "common --repository_cache=$HOME/telegram-bazel-repo" >> ~/.bazelrc
+          touch "$RUNNER_TEMP/build-start"
+          echo "BUILD_STARTED=$(date +%s)" >> "$GITHUB_ENV"
 
       - name: Simulator build
         if: env.MODE == 'check'
@@ -176,6 +188,7 @@ jobs:
           mkdir -p ~/.appstoreconnect/private_keys
           key_path=~/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8
           printf '%s\n' "$ASC_KEY_P8" | tr -d '\r' > "$key_path"
+          export ASC_KEY_PATH="$key_path"
           echo "ASC_KEY_PATH=$key_path" >> "$GITHUB_ENV"
 
           keychain="$RUNNER_TEMP/signing.keychain-db"
@@ -212,6 +225,26 @@ jobs:
             --outputBuildArtifactsPath "$RUNNER_TEMP/artifacts" 2>&1 | tee "$RUNNER_TEMP/build.log" | grep -E --line-buffered "error:|ERROR|FAILED|INFO: Build|Elapsed" || true
           test -f "$RUNNER_TEMP/artifacts/Telegram.ipa" || { tail -200 "$RUNNER_TEMP/build.log"; exit 1; }
           ls -la "$RUNNER_TEMP/artifacts"
+
+      - name: Build time
+        if: always()
+        run: |
+          echo "build took $(( ($(date +%s) - BUILD_STARTED) / 60 )) min; cache hit: ${{ steps.bazel-cache.outputs.cache-matched-key || 'none' }}" | tee -a "$GITHUB_STEP_SUMMARY"
+          # The repo cache limit is 10 GB: over 6 GB, drop disk cache entries this build did not touch.
+          size=$(du -sk ~/telegram-bazel-cache 2>/dev/null | cut -f1 || echo 0)
+          if [ "${size:-0}" -gt 6291456 ]; then
+            find ~/telegram-bazel-cache -type f ! -newer "$RUNNER_TEMP/build-start" -delete || true
+          fi
+          du -sh ~/telegram-bazel-cache ~/telegram-bazel-repo 2>/dev/null || true
+
+      - name: Save Bazel cache
+        if: always() && steps.bazel-cache.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/telegram-bazel-cache
+            ~/telegram-bazel-repo
+          key: bazel-${{ env.MODE }}-${{ hashFiles('versions.json', 'MODULE.bazel') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload to TestFlight
         if: env.MODE == 'release' && env.PUBLISH == 'true'

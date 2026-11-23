@@ -1,0 +1,69 @@
+name: Upstream sync
+
+# Weekly: a new Telegram-iOS release tag becomes a pull request with a merge into main, plus a check build.
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
+      UPSTREAM: https://github.com/TelegramMessenger/Telegram-iOS.git
+    steps:
+      - name: Checkout
+        run: |
+          git clone --filter=blob:none --no-checkout "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" repo
+          cd repo
+          git checkout -q main
+          git config user.name "tgeshka-sync"
+          git config user.email "tgeshka-sync@users.noreply.github.com"
+
+      - name: Find the newest upstream release
+        id: tag
+        working-directory: repo
+        run: |
+          TAG=$(git ls-remote --tags --refs "$UPSTREAM" 'release-*' | sed 's#.*refs/tags/##' | sort -V | tail -1)
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if [ -z "$TAG" ]; then echo "no release tags"; exit 1; fi
+          git fetch -q --filter=blob:none "$UPSTREAM" "refs/tags/$TAG:refs/tags/$TAG"
+          if git merge-base --is-ancestor "$TAG" main; then
+            echo "new=false" >> "$GITHUB_OUTPUT"; echo "$TAG is already in main"
+          elif git ls-remote --exit-code --heads origin "sync/$TAG" "upstream/$TAG" >/dev/null; then
+            echo "new=false" >> "$GITHUB_OUTPUT"; echo "$TAG already has a sync branch"
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Merge and open the pull request
+        if: steps.tag.outputs.new == 'true'
+        working-directory: repo
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          git push -q origin "refs/tags/$TAG"
+          if git merge --no-ff --no-edit -m "Upstream: слияние $TAG" "$TAG"; then
+            git checkout -q -b "sync/$TAG"
+            git push -q origin "sync/$TAG"
+            gh pr create --base main --head "sync/$TAG" --title "Upstream: слияние $TAG" \
+              --body "Новый релиз Telegram-iOS $TAG слит в main без конфликтов. Проверочная сборка запущена на ветке sync/$TAG."
+            gh workflow run tgeshka.yml --ref "sync/$TAG" -f mode=check
+          else
+            CONFLICTS=$(git diff --name-only --diff-filter=U | sed 's/^/- /')
+            git merge --abort
+            git push -q origin "refs/tags/$TAG:refs/heads/upstream/$TAG"
+            printf 'Новый релиз Telegram-iOS %s сливается в main с конфликтами, нужно разрешить вручную:\n\n%s\n' "$TAG" "$CONFLICTS" > body.md
+            gh pr create --base main --head "upstream/$TAG" --title "Upstream: слияние $TAG (конфликты)" --body-file body.md
+          fi
