@@ -34,13 +34,38 @@ func _internal_unregisterNotificationToken(account: Account, token: Data, type: 
 func _internal_registerNotificationToken(account: Account, token: Data, type: NotificationTokenType, sandbox: Bool, otherAccountUserIds: [PeerId.Id], excludeMutedChats: Bool) -> Signal<Bool, NoError> {
     // TGeshka: Telegram has no APNs certificate for this app, so the APNs token goes to
     // our relay and Telegram gets a Web Push subscription pointing there (token_type 10).
+    if case .voip = type {
+        // TGeshka: Telegram cannot send VoIP pushes to this app either, and a VoIP token of the
+        // session may take the place of the Web Push subscription, so it is removed instead.
+        return account.network.request(Api.functions.account.unregisterDevice(tokenType: 9, token: hexString(token), otherUids: []))
+        |> map { _ -> Bool in
+            TGeshkaWebPush.report(apnsToken: nil, stage: "voip_unregister", result: "ok")
+            return true
+        }
+        |> `catch` { error -> Signal<Bool, NoError> in
+            TGeshkaWebPush.report(apnsToken: nil, stage: "voip_unregister", result: error.errorDescription)
+            return .single(true)
+        }
+    }
     if case .aps = type {
         var flags: Int32 = 0
         if excludeMutedChats {
             flags |= 1 << 0
         }
         let accountId = account.id.int64
-        return TGeshkaWebPush.relayEndpoint(apnsToken: token, sandbox: sandbox)
+        // A plain APNs token (token_type 1) left from an earlier build goes nowhere: Telegram has no
+        // certificate for this app. It is removed so that only the Web Push subscription stays.
+        let dropLegacy: Signal<Bool, NoError> = account.network.request(Api.functions.account.unregisterDevice(tokenType: 1, token: hexString(token), otherUids: []))
+        |> map { _ -> Bool in
+            return true
+        }
+        |> `catch` { _ -> Signal<Bool, NoError> in
+            return .single(false)
+        }
+        return dropLegacy
+        |> mapToSignal { _ -> Signal<String?, NoError> in
+            return TGeshkaWebPush.relayEndpoint(apnsToken: token, sandbox: sandbox)
+        }
         |> mapToSignal { endpoint -> Signal<Bool, NoError> in
             guard let endpoint = endpoint, let webToken = TGeshkaWebPush.subscriptionToken(accountId: accountId, endpoint: endpoint) else {
                 Logger.shared.log("TGeshkaPush", "no relay endpoint, push notifications are off")
@@ -49,10 +74,12 @@ func _internal_registerNotificationToken(account: Account, token: Data, type: No
             return account.network.request(Api.functions.account.registerDevice(flags: flags, tokenType: 10, token: webToken, appSandbox: .boolFalse, secret: Buffer(data: Data()), otherUids: otherAccountUserIds.map({ $0._internalGetInt64Value() })))
             |> map { _ -> Bool in
                 Logger.shared.log("TGeshkaPush", "web push subscription registered")
+                TGeshkaWebPush.report(apnsToken: token, stage: "register_device", result: "ok")
                 return true
             }
             |> `catch` { error -> Signal<Bool, NoError> in
-                Logger.shared.log("TGeshkaPush", "registerDevice failed: \(error)")
+                Logger.shared.log("TGeshkaPush", "registerDevice failed: \(error.errorDescription)")
+                TGeshkaWebPush.report(apnsToken: token, stage: "register_device", result: error.errorDescription)
                 return .single(true)
             }
         }
