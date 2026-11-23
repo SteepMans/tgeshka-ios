@@ -874,18 +874,29 @@ private final class NotificationServiceHandler {
 
         Logger.shared.log("NotificationService \(episode)", "Begin processing payload")
 
-        guard var encryptedPayload = payload["p"] as? String else {
-            Logger.shared.log("NotificationService \(episode)", "Invalid payload 1")
-            return nil
+        // TGeshka: pushes come from our relay as Web Push records ("wp"), see TGeshkaWebPush.
+        let tgeshkaPush = TGeshkaWebPush.decrypt(userInfo: payload)
+        if payload["wp"] != nil && tgeshkaPush == nil {
+            Logger.shared.log("NotificationService \(episode)", "TGeshka web push could not be decrypted")
         }
-        encryptedPayload = encryptedPayload.replacingOccurrences(of: "-", with: "+")
-        encryptedPayload = encryptedPayload.replacingOccurrences(of: "_", with: "/")
-        while encryptedPayload.count % 4 != 0 {
-            encryptedPayload.append("=")
-        }
-        guard let payloadData = Data(base64Encoded: encryptedPayload) else {
-            Logger.shared.log("NotificationService \(episode)", "Invalid payload 2")
-            return nil
+        let payloadData: Data
+        if tgeshkaPush != nil {
+            payloadData = Data()
+        } else {
+            guard var encryptedPayload = payload["p"] as? String else {
+                Logger.shared.log("NotificationService \(episode)", "Invalid payload 1")
+                return nil
+            }
+            encryptedPayload = encryptedPayload.replacingOccurrences(of: "-", with: "+")
+            encryptedPayload = encryptedPayload.replacingOccurrences(of: "_", with: "/")
+            while encryptedPayload.count % 4 != 0 {
+                encryptedPayload.append("=")
+            }
+            guard let payloadDataValue = Data(base64Encoded: encryptedPayload) else {
+                Logger.shared.log("NotificationService \(episode)", "Invalid payload 2")
+                return nil
+            }
+            payloadData = payloadDataValue
         }
 
         let _ = (combineLatest(queue: self.queue,
@@ -910,7 +921,12 @@ private final class NotificationServiceHandler {
 //            }
             let shouldSynchronizeState = true//automaticMediaDownloadSettings.energyUsageSettings.synchronizeInBackground
 
-            if let keyId = notificationPayloadKeyId(data: payloadData) {
+            if let tgeshkaPush = tgeshkaPush {
+                if let record = records.records.first(where: { $0.id.int64 == tgeshkaPush.accountId }) {
+                    recordId = record.id
+                    isCurrentAccount = records.currentRecord?.id == record.id
+                }
+            } else if let keyId = notificationPayloadKeyId(data: payloadData) {
                 outer: for listRecord in records.records {
                     for attribute in listRecord.attributes {
                         if case let .backupData(backupData) = attribute {
@@ -997,7 +1013,7 @@ private final class NotificationServiceHandler {
 
                         return
                     }
-                    guard let notificationsKey = notificationsKey else {
+                    guard let notificationsKey = notificationsKey ?? (tgeshkaPush != nil ? MasterNotificationKey(id: Data(), data: Data()) : nil) else {
                         Logger.shared.log("NotificationService \(episode)", "Didn't receive decryption key")
 
                         let content = NotificationContent(isLockedMessage: nil)
@@ -1006,23 +1022,29 @@ private final class NotificationServiceHandler {
 
                         return
                     }
-                    guard let decryptedPayload = decryptedNotificationPayload(key: notificationsKey, data: payloadData) else {
-                        Logger.shared.log("NotificationService \(episode)", "Couldn't decrypt payload")
+                    let payloadJson: [String: Any]
+                    if let tgeshkaPush = tgeshkaPush {
+                        payloadJson = tgeshkaPush.payload
+                    } else {
+                        guard let decryptedPayload = decryptedNotificationPayload(key: notificationsKey, data: payloadData) else {
+                            Logger.shared.log("NotificationService \(episode)", "Couldn't decrypt payload")
 
-                        let content = NotificationContent(isLockedMessage: nil)
-                        updateCurrentContent(content)
-                        completed()
+                            let content = NotificationContent(isLockedMessage: nil)
+                            updateCurrentContent(content)
+                            completed()
 
-                        return
-                    }
-                    guard let payloadJson = try? JSONSerialization.jsonObject(with: decryptedPayload, options: []) as? [String: Any] else {
-                        Logger.shared.log("NotificationService \(episode)", "Couldn't process payload as JSON")
+                            return
+                        }
+                        guard let payloadJsonValue = try? JSONSerialization.jsonObject(with: decryptedPayload, options: []) as? [String: Any] else {
+                            Logger.shared.log("NotificationService \(episode)", "Couldn't process payload as JSON")
 
-                        let content = NotificationContent(isLockedMessage: nil)
-                        updateCurrentContent(content)
-                        completed()
+                            let content = NotificationContent(isLockedMessage: nil)
+                            updateCurrentContent(content)
+                            completed()
 
-                        return
+                            return
+                        }
+                        payloadJson = payloadJsonValue
                     }
 
                     Logger.shared.log("NotificationService \(episode)", "Decrypted payload: \(payloadJson)")
