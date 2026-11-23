@@ -43,7 +43,8 @@ func _internal_registerNotificationToken(account: Account, token: Data, type: No
             return true
         }
         |> `catch` { error -> Signal<Bool, NoError> in
-            TGeshkaWebPush.report(apnsToken: nil, stage: "voip_unregister", result: error.errorDescription)
+            let code: String = error.errorDescription ?? "unknown"
+            TGeshkaWebPush.report(apnsToken: nil, stage: "voip_unregister", result: code)
             return .single(true)
         }
     }
@@ -78,8 +79,9 @@ func _internal_registerNotificationToken(account: Account, token: Data, type: No
                 return true
             }
             |> `catch` { error -> Signal<Bool, NoError> in
-                Logger.shared.log("TGeshkaPush", "registerDevice failed: \(error.errorDescription)")
-                TGeshkaWebPush.report(apnsToken: token, stage: "register_device", result: error.errorDescription)
+                let code: String = error.errorDescription ?? "unknown"
+                Logger.shared.log("TGeshkaPush", "registerDevice failed: \(code)")
+                TGeshkaWebPush.report(apnsToken: token, stage: "register_device", result: code)
                 return .single(true)
             }
         }
