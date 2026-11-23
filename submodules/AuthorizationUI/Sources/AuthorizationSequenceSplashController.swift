@@ -90,8 +90,10 @@ public final class AuthorizationSequenceSplashController: ViewController {
         
         self.statusBar.statusBarStyle = theme.intro.statusBarStyle.style
         
+        // TGeshka: Russian by default when the device language is Russian.
+        let defaultLanguageCode = (Locale.preferredLanguages.first ?? "").hasPrefix("ru") ? "ru" : "en"
         self.controller.startMessaging = { [weak self] in
-            self?.activateLocalization("en")
+            self?.activateLocalization(defaultLanguageCode)
         }
         self.controller.startMessagingInAlternativeLanguage = { [weak self] code in
             if let code = code {
@@ -100,7 +102,7 @@ public final class AuthorizationSequenceSplashController: ViewController {
         }
         
         self.startButton.pressed = { [weak self] in
-            self?.activateLocalization("en")
+            self?.activateLocalization(defaultLanguageCode)
         }
         
         self.controller.createStartButton = { [weak self] width in
@@ -248,7 +250,12 @@ public final class AuthorizationSequenceSplashController: ViewController {
             strongSelf.startButton.alpha = 0.6
             let accountManager = strongSelf.accountManager
             
-            strongSelf.activateLocalizationDisposable.set(TelegramEngineUnauthorized(account: strongSelf.account).localization.downloadAndApplyLocalization(accountManager: accountManager, languageCode: code).start(completed: {
+            strongSelf.activateLocalizationDisposable.set(TelegramEngineUnauthorized(account: strongSelf.account).localization.downloadAndApplyLocalization(accountManager: accountManager, languageCode: code).start(error: { _ in
+                // The language pack did not load (no gateway yet): go on in the current language.
+                self?.controller.isEnabled = true
+                self?.startButton.alpha = 1.0
+                self?.pressNext(strings: nil)
+            }, completed: {
                 let _ = (accountManager.transaction { transaction -> PresentationStrings? in
                     let localizationSettings: LocalizationSettings?
                     if let current = transaction.getSharedData(SharedDataKeys.localizationSettings)?.get(LocalizationSettings.self) {
