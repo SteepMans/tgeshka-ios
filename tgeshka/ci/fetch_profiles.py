@@ -50,10 +50,13 @@ def main():
         bundle = ids[0]["id"]
         name = "TGeshka AppStore " + ident
         code, d = call("GET", "/v1/bundleIds/%s/profiles?limit=50" % bundle)
-        profiles = [p for p in d.get("data", []) if p["attributes"]["name"] == name and p["attributes"]["profileState"] == "ACTIVE"]
-        if profiles and os.environ.get("RECREATE_PROFILES") == "1":
-            for p in profiles:
-                call("DELETE", "/v1/profiles/" + p["id"])
+        named = [p for p in d.get("data", []) if p["attributes"]["name"] == name]
+        profiles = [p for p in named if p["attributes"]["profileState"] == "ACTIVE"]
+        # A capability change (App Group) invalidates profiles; they keep the name, so drop them before creating anew.
+        stale = named if os.environ.get("RECREATE_PROFILES") == "1" else [p for p in named if p not in profiles]
+        for p in stale:
+            call("DELETE", "/v1/profiles/" + p["id"])
+        if os.environ.get("RECREATE_PROFILES") == "1":
             profiles = []
         if profiles:
             code, d = call("GET", "/v1/profiles/" + profiles[0]["id"])
