@@ -1930,6 +1930,8 @@ ios_application(
     resources = [
         ":LaunchScreen",
         #":DefaultAppIcon",
+        # TGeshka: "What's new" in Settings → TGeshka (SettingsUI TGeshkaWhatsNew.swift).
+        "//:CHANGELOG-tgeshka.json",
     ],
     frameworks = [
         ":MtProtoKitFramework",

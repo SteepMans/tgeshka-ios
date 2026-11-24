@@ -8,7 +8,7 @@ import ItemListUI
 import PresentationDataUtils
 import AccountContext
 
-// TGeshka settings: gateway address and access key, gateway state, about.
+// TGeshka settings: gateway address and access key, gateway state, about, what's new.
 
 private final class TGeshkaSettingsArguments {
     let updateUrl: (String) -> Void
@@ -17,14 +17,16 @@ private final class TGeshkaSettingsArguments {
     let save: () -> Void
     let reconnect: () -> Void
     let openSources: () -> Void
+    let openWhatsNew: () -> Void
 
-    init(updateUrl: @escaping (String) -> Void, updateKey: @escaping (String) -> Void, paste: @escaping () -> Void, save: @escaping () -> Void, reconnect: @escaping () -> Void, openSources: @escaping () -> Void) {
+    init(updateUrl: @escaping (String) -> Void, updateKey: @escaping (String) -> Void, paste: @escaping () -> Void, save: @escaping () -> Void, reconnect: @escaping () -> Void, openSources: @escaping () -> Void, openWhatsNew: @escaping () -> Void) {
         self.updateUrl = updateUrl
         self.updateKey = updateKey
         self.paste = paste
         self.save = save
         self.reconnect = reconnect
         self.openSources = openSources
+        self.openWhatsNew = openWhatsNew
     }
 }
 
@@ -63,6 +65,7 @@ private enum TGeshkaSettingsEntry: ItemListNodeEntry {
     case aboutHeader(String)
     case aboutText(String)
     case sources(String)
+    case whatsNew(String)
 
     var section: ItemListSectionId {
         switch self {
@@ -72,7 +75,7 @@ private enum TGeshkaSettingsEntry: ItemListNodeEntry {
             return TGeshkaSettingsSection.gateway.rawValue
         case .stateHeader, .stateRow, .reconnect:
             return TGeshkaSettingsSection.state.rawValue
-        case .aboutHeader, .aboutText, .sources:
+        case .aboutHeader, .aboutText, .sources, .whatsNew:
             return TGeshkaSettingsSection.about.rawValue
         }
     }
@@ -103,8 +106,10 @@ private enum TGeshkaSettingsEntry: ItemListNodeEntry {
             return 50
         case .aboutText:
             return 51
-        case .sources:
+        case .whatsNew:
             return 52
+        case .sources:
+            return 53
         }
     }
 
@@ -148,6 +153,10 @@ private enum TGeshkaSettingsEntry: ItemListNodeEntry {
         case let .sources(title):
             return ItemListActionItem(presentationData: presentationData, systemStyle: .glass, title: title, kind: .generic, alignment: .natural, sectionId: self.section, style: .blocks, action: {
                 arguments.openSources()
+            })
+        case let .whatsNew(title):
+            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: title, label: "", sectionId: self.section, style: .blocks, action: {
+                arguments.openWhatsNew()
             })
         }
     }
@@ -227,6 +236,9 @@ private func tgeshkaSettingsEntries(state: TGeshkaSettingsState, firstRun: Bool,
     let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
     let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
     entries.append(.aboutText("TGeshka \(version) (\(build)) — неофициальный клиент Telegram на основе Telegram-iOS (GPLv2). Все соединения с Telegram идут через шлюз. Звонки пока подключаются напрямую."))
+    if !firstRun {
+        entries.append(.whatsNew("Что нового"))
+    }
     entries.append(.sources("Исходный код"))
     return entries
 }
@@ -261,6 +273,7 @@ public func tgeshkaSettingsController(sharedContext: SharedAccountContext, prese
     let checkDisposable = MetaDisposable()
     var dismissImpl: (() -> Void)?
     var endEditingImpl: (() -> Void)?
+    var pushControllerImpl: ((ViewController) -> Void)?
 
     let save: () -> Void = {
         endEditingImpl?()
@@ -338,6 +351,8 @@ public func tgeshkaSettingsController(sharedContext: SharedAccountContext, prese
         if let url = URL(string: "https://github.com/SteepMans/tgeshka-ios") {
             sharedContext.applicationBindings.openUrl(url.absoluteString)
         }
+    }, openWhatsNew: {
+        pushControllerImpl?(tgeshkaWhatsNewController(sharedContext: sharedContext))
     })
 
     let statsDisposable = (TGeshkaGateway.shared.statsSignal
@@ -373,6 +388,9 @@ public func tgeshkaSettingsController(sharedContext: SharedAccountContext, prese
     }
     endEditingImpl = { [weak controller] in
         controller?.view.endEditing(true)
+    }
+    pushControllerImpl = { [weak controller] c in
+        controller?.push(c)
     }
     return controller
 }
