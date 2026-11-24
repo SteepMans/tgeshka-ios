@@ -18,8 +18,9 @@ private final class TGeshkaSettingsArguments {
     let reconnect: () -> Void
     let openSources: () -> Void
     let openWhatsNew: () -> Void
+    let toggleShowMember: (Bool) -> Void
 
-    init(updateUrl: @escaping (String) -> Void, updateKey: @escaping (String) -> Void, paste: @escaping () -> Void, save: @escaping () -> Void, reconnect: @escaping () -> Void, openSources: @escaping () -> Void, openWhatsNew: @escaping () -> Void) {
+    init(updateUrl: @escaping (String) -> Void, updateKey: @escaping (String) -> Void, paste: @escaping () -> Void, save: @escaping () -> Void, reconnect: @escaping () -> Void, openSources: @escaping () -> Void, openWhatsNew: @escaping () -> Void, toggleShowMember: @escaping (Bool) -> Void) {
         self.updateUrl = updateUrl
         self.updateKey = updateKey
         self.paste = paste
@@ -27,6 +28,7 @@ private final class TGeshkaSettingsArguments {
         self.reconnect = reconnect
         self.openSources = openSources
         self.openWhatsNew = openWhatsNew
+        self.toggleShowMember = toggleShowMember
     }
 }
 
@@ -34,6 +36,7 @@ private enum TGeshkaSettingsSection: Int32 {
     case intro
     case gateway
     case state
+    case badge
     case about
 }
 
@@ -49,6 +52,7 @@ private struct TGeshkaSettingsState: Equatable {
     var key: String
     var check: TGeshkaCheckState
     var stats: TGeshkaGatewayStats
+    var showMember: Bool
 }
 
 private enum TGeshkaSettingsEntry: ItemListNodeEntry {
@@ -66,6 +70,9 @@ private enum TGeshkaSettingsEntry: ItemListNodeEntry {
     case aboutText(String)
     case sources(String)
     case whatsNew(String)
+    case badgeHeader(String)
+    case showMember(String, Bool)
+    case badgeFooter(String)
 
     var section: ItemListSectionId {
         switch self {
@@ -75,6 +82,8 @@ private enum TGeshkaSettingsEntry: ItemListNodeEntry {
             return TGeshkaSettingsSection.gateway.rawValue
         case .stateHeader, .stateRow, .reconnect:
             return TGeshkaSettingsSection.state.rawValue
+        case .badgeHeader, .showMember, .badgeFooter:
+            return TGeshkaSettingsSection.badge.rawValue
         case .aboutHeader, .aboutText, .sources, .whatsNew:
             return TGeshkaSettingsSection.about.rawValue
         }
@@ -102,6 +111,12 @@ private enum TGeshkaSettingsEntry: ItemListNodeEntry {
             return 21 + index
         case .reconnect:
             return 40
+        case .badgeHeader:
+            return 45
+        case .showMember:
+            return 46
+        case .badgeFooter:
+            return 47
         case .aboutHeader:
             return 50
         case .aboutText:
@@ -126,7 +141,7 @@ private enum TGeshkaSettingsEntry: ItemListNodeEntry {
             return ItemListActionItem(presentationData: presentationData, systemStyle: .glass, title: title, kind: .generic, alignment: .natural, sectionId: self.section, style: .blocks, action: {
                 arguments.paste()
             })
-        case let .gatewayHeader(text), let .stateHeader(text), let .aboutHeader(text):
+        case let .gatewayHeader(text), let .stateHeader(text), let .aboutHeader(text), let .badgeHeader(text):
             return ItemListSectionHeaderItem(presentationData: presentationData, text: text, sectionId: self.section)
         case let .url(placeholder, text):
             return ItemListSingleLineInputItem(presentationData: presentationData, systemStyle: .glass, title: NSAttributedString(), text: text, placeholder: placeholder, type: .regular(capitalization: false, autocorrection: false), sectionId: self.section, textUpdated: { value in
@@ -142,7 +157,7 @@ private enum TGeshkaSettingsEntry: ItemListNodeEntry {
             return ItemListActionItem(presentationData: presentationData, systemStyle: .glass, title: title, kind: enabled ? .generic : .disabled, alignment: .natural, sectionId: self.section, style: .blocks, action: {
                 arguments.save()
             })
-        case let .gatewayFooter(text), let .aboutText(text):
+        case let .gatewayFooter(text), let .aboutText(text), let .badgeFooter(text):
             return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
         case let .stateRow(_, title, value):
             return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: title, label: value, sectionId: self.section, style: .blocks, disclosureStyle: .none, action: nil)
@@ -157,6 +172,10 @@ private enum TGeshkaSettingsEntry: ItemListNodeEntry {
         case let .whatsNew(title):
             return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: title, label: "", sectionId: self.section, style: .blocks, action: {
                 arguments.openWhatsNew()
+            })
+        case let .showMember(title, value):
+            return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: title, value: value, sectionId: self.section, style: .blocks, updated: { value in
+                arguments.toggleShowMember(value)
             })
         }
     }
@@ -232,6 +251,12 @@ private func tgeshkaSettingsEntries(state: TGeshkaSettingsState, firstRun: Bool,
     }
     entries.append(.reconnect("Переподключить"))
 
+    if !firstRun {
+        entries.append(.badgeHeader("ЗНАЧОК TGESHKA"))
+        entries.append(.showMember("Показывать, что я пользуюсь TGeshka", state.showMember))
+        entries.append(.badgeFooter("Пользователи TGeshka видят лавандовый значок рядом с именами друг друга: в списке чатов, в шапке чата, в профиле и у имени в группах. В обычном Telegram ничего не меняется."))
+    }
+
     entries.append(.aboutHeader("О TGESHKA"))
     let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
     let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
@@ -263,7 +288,7 @@ public func tgeshkaSettingsController(context: AccountContext) -> ViewController
 
 public func tgeshkaSettingsController(sharedContext: SharedAccountContext, presentationData: PresentationData, updatedPresentationData: Signal<PresentationData, NoError>, firstRun: Bool, prefilled: TGeshkaGatewaySettings? = nil) -> ViewController {
     let current = prefilled ?? TGeshkaGateway.shared.settings
-    let initialState = TGeshkaSettingsState(url: current.url, key: current.token, check: .none, stats: TGeshkaGateway.shared.currentStats)
+    let initialState = TGeshkaSettingsState(url: current.url, key: current.token, check: .none, stats: TGeshkaGateway.shared.currentStats, showMember: TGeshkaMembers.shared.isVisible)
     let stateValue = Atomic(value: initialState)
     let statePromise = ValuePromise(initialState, ignoreRepeated: true)
     let updateState: ((TGeshkaSettingsState) -> TGeshkaSettingsState) -> Void = { f in
@@ -353,6 +378,13 @@ public func tgeshkaSettingsController(sharedContext: SharedAccountContext, prese
         }
     }, openWhatsNew: {
         pushControllerImpl?(tgeshkaWhatsNewController(sharedContext: sharedContext))
+    }, toggleShowMember: { value in
+        TGeshkaMembers.shared.setVisible(value)
+        updateState { current in
+            var current = current
+            current.showMember = value
+            return current
+        }
     })
 
     let statsDisposable = (TGeshkaGateway.shared.statsSignal

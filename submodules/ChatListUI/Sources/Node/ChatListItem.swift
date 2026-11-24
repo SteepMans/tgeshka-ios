@@ -1517,6 +1517,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
     var verifiedIconComponent: EmojiStatusComponent?
     var credibilityIconView: ComponentHostView<Empty>?
     var credibilityIconComponent: EmojiStatusComponent?
+    var tgeshkaBadgeView: UIImageView?
     var statusIconView: ComponentHostView<Empty>?
     var statusIconComponent: EmojiStatusComponent?
     let hiddenPeerIconNode: ASImageNode
@@ -2674,6 +2675,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
             var currentStatusIconContent: EmojiStatusComponent.Content?
             var currentStatusIconParticleColor: UIColor?
             var currentSecretIconImage: UIImage?
+            var currentTGeshkaBadge = false
             var currentMessageTypeIcon: UIImage?
             var currentMessageTypeIconOffset: CGPoint = .zero
             
@@ -3828,6 +3830,10 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                     if let verificationIconFileId = peer.verificationIconFileId {
                         currentVerifiedIconContent = .animation(content: .customEmoji(fileId: verificationIconFileId), size: CGSize(width: 32.0, height: 32.0), placeholderColor: item.presentationData.theme.list.mediaPlaceholderColor, themeColor: item.presentationData.theme.list.itemAccentColor, loopMode: .count(0))
                     }
+                    // TGeshka: the badge after the name of a user who also uses TGeshka.
+                    if TGeshkaMembers.shared.isMember(peer: peer) {
+                        currentTGeshkaBadge = true
+                    }
                 }
             }
             if case let .peer(peerData) = item.content, peerData.isSideListAllThreadsItem {
@@ -3835,6 +3841,15 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                 currentCredibilityIconContent = nil
                 currentVerifiedIconContent = nil
                 currentStatusIconContent = nil
+                currentTGeshkaBadge = false
+            }
+            if currentTGeshkaBadge {
+                if titleIconsWidth.isZero {
+                    titleIconsWidth += 4.0
+                } else {
+                    titleIconsWidth += 2.0
+                }
+                titleIconsWidth += 16.0
             }
             if let currentSecretIconImage = currentSecretIconImage {
                 titleIconsWidth += currentSecretIconImage.size.width + 2.0
@@ -5431,6 +5446,24 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                         lastLineRect = CGRect(origin: CGPoint(x: 0.0, y: titleLayout.size.height - rect.height - 2.0), size: CGSize(width: rect.width, height: rect.height + 2.0))
                     } else {
                         lastLineRect = CGRect(origin: CGPoint(), size: titleLayout.size)
+                    }
+
+                    if currentTGeshkaBadge {
+                        let tgeshkaBadgeView: UIImageView
+                        if let current = strongSelf.tgeshkaBadgeView {
+                            tgeshkaBadgeView = current
+                        } else {
+                            tgeshkaBadgeView = UIImageView()
+                            tgeshkaBadgeView.image = tgeshkaBadgeImage(size: 16.0)
+                            strongSelf.tgeshkaBadgeView = tgeshkaBadgeView
+                            strongSelf.mainContentContainerNode.view.addSubview(tgeshkaBadgeView)
+                        }
+                        let badgeSize = CGSize(width: 16.0, height: 16.0)
+                        transition.updateFrame(view: tgeshkaBadgeView, frame: CGRect(origin: CGPoint(x: nextTitleIconOrigin, y: floorToScreenPixels(titleFrame.maxY - lastLineRect.height * 0.5 - badgeSize.height / 2.0) - UIScreenPixel), size: badgeSize))
+                        nextTitleIconOrigin += badgeSize.width + 4.0
+                    } else if let tgeshkaBadgeView = strongSelf.tgeshkaBadgeView {
+                        strongSelf.tgeshkaBadgeView = nil
+                        tgeshkaBadgeView.removeFromSuperview()
                     }
                                         
                     if let currentStatusIconContent {

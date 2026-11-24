@@ -146,6 +146,10 @@ final class PeerInfoHeaderNode: ASDisplayNode {
     var statusIconSize: CGSize?
     let titleExpandedStatusIconView: ComponentHostView<Empty>
     var titleExpandedStatusIconSize: CGSize?
+
+    // TGeshka: the badge after the name of a user who also uses TGeshka.
+    let titleTGeshkaBadgeView: UIImageView
+    let titleExpandedTGeshkaBadgeView: UIImageView
     
     var subtitleRating: ComponentView<Empty>?
     
@@ -328,6 +332,16 @@ final class PeerInfoHeaderNode: ASDisplayNode {
         
         self.titleExpandedStatusIconView = ComponentHostView<Empty>()
         self.titleNode.stateNode(forKey: TitleNodeStateExpanded)?.view.addSubview(self.titleExpandedStatusIconView)
+
+        self.titleTGeshkaBadgeView = UIImageView()
+        self.titleTGeshkaBadgeView.image = tgeshkaBadgeImage(size: 20.0)
+        self.titleTGeshkaBadgeView.isHidden = true
+        self.titleNode.stateNode(forKey: TitleNodeStateRegular)?.view.addSubview(self.titleTGeshkaBadgeView)
+
+        self.titleExpandedTGeshkaBadgeView = UIImageView()
+        self.titleExpandedTGeshkaBadgeView.image = tgeshkaBadgeImage(size: 18.0)
+        self.titleExpandedTGeshkaBadgeView.isHidden = true
+        self.titleNode.stateNode(forKey: TitleNodeStateExpanded)?.view.addSubview(self.titleExpandedTGeshkaBadgeView)
         
         self.subtitleNodeContainer = ASDisplayNode()
         self.subtitleNodeRawContainer = ASDisplayNode()
@@ -1437,6 +1451,10 @@ final class PeerInfoHeaderNode: ASDisplayNode {
         let expandedAvatarHeight: CGFloat = expandedAvatarListSize.height
         
         var titleConstrainedSize = CGSize(width: width - stripLeft - stripRight - textSideInset * 2.0 - (isPremium || isVerified || isFake ? 20.0 : 0.0), height: .greatestFiniteMagnitude)
+        let showsTGeshkaBadge = threadData == nil && TGeshkaMembers.shared.isMember(peer: peer)
+        if showsTGeshkaBadge {
+            titleConstrainedSize.width -= 24.0
+        }
         if self.navigationRowRightButtonCount > 1 {
             titleConstrainedSize.width -= 60.0
         }
@@ -1698,6 +1716,21 @@ final class PeerInfoHeaderNode: ASDisplayNode {
         var titleExpandedHorizontalOffset: CGFloat = 0.0
         var nextIconX: CGFloat = titleSize.width
         var nextExpandedIconX: CGFloat = titleExpandedSize.width
+
+        if showsTGeshkaBadge {
+            let badgeSize = CGSize(width: 20.0, height: 20.0)
+            let expandedBadgeSize = CGSize(width: 18.0, height: 18.0)
+            titleHorizontalOffset -= (badgeSize.width + 4.0) / 2.0
+            self.titleTGeshkaBadgeView.isHidden = false
+            self.titleExpandedTGeshkaBadgeView.isHidden = false
+            transition.updateFrame(view: self.titleTGeshkaBadgeView, frame: CGRect(origin: CGPoint(x: nextIconX + 4.0, y: floor((titleSize.height - badgeSize.height) / 2.0)), size: badgeSize))
+            transition.updateFrame(view: self.titleExpandedTGeshkaBadgeView, frame: CGRect(origin: CGPoint(x: nextExpandedIconX + 4.0, y: floor((titleExpandedSize.height - expandedBadgeSize.height) / 2.0) + 1.0), size: expandedBadgeSize))
+            nextIconX += 4.0 + badgeSize.width
+            nextExpandedIconX += 4.0 + expandedBadgeSize.width
+        } else {
+            self.titleTGeshkaBadgeView.isHidden = true
+            self.titleExpandedTGeshkaBadgeView.isHidden = true
+        }
         
         if let statusIconSize = self.statusIconSize, let titleExpandedStatusIconSize = self.titleExpandedStatusIconSize, statusIconSize.width > 0.0 {
             let offset = (statusIconSize.width + 4.0) / 2.0
