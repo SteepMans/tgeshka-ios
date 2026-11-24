@@ -1337,6 +1337,11 @@ public class Account {
         self.supplementary = supplementary
         self.isSupportUser = isSupportUser
         
+        // TGeshka: the account is reported to the gateway's member list (TGeshka badge).
+        if !supplementary {
+            TGeshkaMembers.shared.addAccount(peerId.id._internalGetInt64Value())
+        }
+        
         self.networkStatsContext = NetworkStatsContext(postbox: postbox)
         
         self.peerInputActivityManager = PeerInputActivityManager()

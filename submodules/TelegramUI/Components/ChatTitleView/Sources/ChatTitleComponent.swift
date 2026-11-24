@@ -591,6 +591,7 @@ public final class ChatTitleComponent: Component {
         private var credibilityIcon: ComponentView<Empty>?
         private var verifiedIcon: ComponentView<Empty>?
         private var statusIcon: ComponentView<Empty>?
+        private var tgeshkaBadgeView: UIImageView?
         
         private var presenceManager: PeerPresenceStatusManager?
         
@@ -682,6 +683,7 @@ public final class ChatTitleComponent: Component {
             var titleCredibilityIcon: ChatTitleCredibilityIcon = .none
             var titleVerifiedIcon: ChatTitleCredibilityIcon = .none
             var titleStatusIcon: ChatTitleCredibilityIcon = .none
+            var titleTGeshkaBadge = false
             var hidesGlass = false
             var isEnabled = true
             switch component.content {
@@ -770,6 +772,10 @@ public final class ChatTitleComponent: Component {
                             }
                             if let verificationIconFileId = peer.verificationIconFileId {
                                 titleVerifiedIcon = .emojiStatus(PeerEmojiStatus(content: .emoji(fileId: verificationIconFileId), expirationDate: nil))
+                            }
+                            // TGeshka: the badge after the name of a user who also uses TGeshka.
+                            if TGeshkaMembers.shared.isMember(peer: EnginePeer(peer)) {
+                                titleTGeshkaBadge = true
                             }
                         }
                     }
@@ -1437,6 +1443,10 @@ public final class ChatTitleComponent: Component {
             if let statusIconSize {
                 titleRightIconsWidth += statusIconSize.width + statusIconsSpacing
             }
+            let tgeshkaBadgeSize = CGSize(width: 18.0, height: 18.0)
+            if titleTGeshkaBadge {
+                titleRightIconsWidth += tgeshkaBadgeSize.width + statusIconsSpacing
+            }
             
             let maxTitleWidth = availableSize.width - titleLeftIconsWidth - titleRightIconsWidth - containerSideInset * 2.0
             
@@ -1542,6 +1552,25 @@ public final class ChatTitleComponent: Component {
             }
             
             var nextRightIconX: CGFloat = titleFrame.maxX
+            if titleTGeshkaBadge {
+                let tgeshkaBadgeView: UIImageView
+                if let current = self.tgeshkaBadgeView {
+                    tgeshkaBadgeView = current
+                } else {
+                    tgeshkaBadgeView = UIImageView()
+                    tgeshkaBadgeView.image = tgeshkaBadgeImage(size: tgeshkaBadgeSize.width)
+                    tgeshkaBadgeView.isUserInteractionEnabled = false
+                    self.tgeshkaBadgeView = tgeshkaBadgeView
+                    self.contentContainer.addSubview(tgeshkaBadgeView)
+                }
+                let tgeshkaBadgeFrame = CGRect(origin: CGPoint(x: nextRightIconX + statusIconsSpacing, y: floorToScreenPixels(titleFrame.midY - tgeshkaBadgeSize.height * 0.5)), size: tgeshkaBadgeSize)
+                transition.setFrame(view: tgeshkaBadgeView, frame: tgeshkaBadgeFrame)
+                nextRightIconX += statusIconsSpacing + tgeshkaBadgeSize.width
+            } else if let tgeshkaBadgeView = self.tgeshkaBadgeView {
+                self.tgeshkaBadgeView = nil
+                tgeshkaBadgeView.removeFromSuperview()
+            }
+
             
             if let credibilityIconSize, let credibilityIconView = self.credibilityIcon?.view {
                 let credibilityIconFrame = CGRect(origin: CGPoint(x: nextRightIconX + statusIconsSpacing, y: titleFrame.minY), size: credibilityIconSize)

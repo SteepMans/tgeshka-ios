@@ -2810,6 +2810,9 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                     currentCredibilityIcon = (.verified(fillColor: item.presentationData.theme.theme.list.itemCheckColors.fillColor, foregroundColor: item.presentationData.theme.theme.list.itemCheckColors.foregroundColor, sizeType: .compact), nil)
                 } else if effectiveAuthor.isPremium {
                     currentCredibilityIcon = (.premium(color: color.withMultipliedAlpha(0.4)), nil)
+                } else if TGeshkaMembers.shared.isMember(peerId: effectiveAuthor.id) {
+                    // TGeshka: the badge after the name of a sender who also uses TGeshka.
+                    currentCredibilityIcon = (.image(image: tgeshkaBadgeImage(size: 16.0), tintColor: nil), nil)
                 }
             }
             if let rawAuthorNameColor = authorNameColor {
