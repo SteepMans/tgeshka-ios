@@ -6,11 +6,14 @@ import TelegramCore
 import TelegramPresentationData
 import ItemListUI
 import PresentationDataUtils
+import TextFormat
 import AccountContext
 
 // TGeshka settings: gateway address and access key, gateway state, about, what's new.
 
 private final class TGeshkaSettingsArguments {
+    // Set after init: the last gateway error, its full technical text and "Copy".
+    var openErrorDetails: (() -> Void)?
     let updateUrl: (String) -> Void
     let updateKey: (String) -> Void
     let paste: () -> Void
@@ -62,6 +65,8 @@ private enum TGeshkaSettingsEntry: ItemListNodeEntry {
     case stateHeader(String)
     case stateRow(Int32, String, String)
     case reconnect(String)
+    case lastError(String, String)
+    case lastErrorRecovered(String)
     case aboutHeader(String)
     case aboutText(String)
     case sources(String)
@@ -73,7 +78,7 @@ private enum TGeshkaSettingsEntry: ItemListNodeEntry {
             return TGeshkaSettingsSection.intro.rawValue
         case .gatewayHeader, .url, .key, .save, .gatewayFooter:
             return TGeshkaSettingsSection.gateway.rawValue
-        case .stateHeader, .stateRow, .reconnect:
+        case .stateHeader, .stateRow, .reconnect, .lastError, .lastErrorRecovered:
             return TGeshkaSettingsSection.state.rawValue
         case .aboutHeader, .aboutText, .sources, .whatsNew:
             return TGeshkaSettingsSection.about.rawValue
@@ -100,8 +105,12 @@ private enum TGeshkaSettingsEntry: ItemListNodeEntry {
             return 20
         case let .stateRow(index, _, _):
             return 21 + index
+        case .lastError:
+            return 35
         case .reconnect:
             return 40
+        case .lastErrorRecovered:
+            return 41
         case .aboutHeader:
             return 50
         case .aboutText:
@@ -144,6 +153,14 @@ private enum TGeshkaSettingsEntry: ItemListNodeEntry {
             })
         case let .gatewayFooter(text), let .aboutText(text):
             return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
+        case let .lastError(label, text):
+            return ItemListTextWithLabelItem(presentationData: presentationData, label: label, text: text, style: .blocks, enabledEntityTypes: [], multiline: true, sectionId: self.section, action: {
+                arguments.openErrorDetails?()
+            })
+        case let .lastErrorRecovered(text):
+            return ItemListTextItem(presentationData: presentationData, text: .markdown(text), sectionId: self.section, linkAction: { _ in
+                arguments.openErrorDetails?()
+            })
         case let .stateRow(_, title, value):
             return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: title, label: value, sectionId: self.section, style: .blocks, disclosureStyle: .none, action: nil)
         case let .reconnect(title):
@@ -166,13 +183,6 @@ private func formatBytes(_ value: Int64) -> String {
     let formatter = ByteCountFormatter()
     formatter.countStyle = .binary
     return formatter.string(fromByteCount: value)
-}
-
-private func formatDate(_ date: Date) -> String {
-    let formatter = DateFormatter()
-    formatter.locale = Locale(identifier: "ru_RU")
-    formatter.dateFormat = "dd.MM HH:mm:ss"
-    return formatter.string(from: date)
 }
 
 private func tgeshkaSettingsEntries(state: TGeshkaSettingsState, firstRun: Bool, hasPasteboardLink: Bool) -> [TGeshkaSettingsEntry] {
@@ -226,11 +236,21 @@ private func tgeshkaSettingsEntries(state: TGeshkaSettingsState, firstRun: Bool,
     entries.append(.stateRow(2, "Соединения", connections))
     entries.append(.stateRow(3, "Получено", formatBytes(stats.bytesIn)))
     entries.append(.stateRow(4, "Отправлено", formatBytes(stats.bytesOut)))
-    if let error = stats.lastError {
-        let when = stats.lastErrorDate.flatMap { formatDate($0) } ?? ""
-        entries.append(.stateRow(5, "Последняя ошибка", when.isEmpty ? error : "\(error), \(when)"))
+    var recoveredErrorText: String?
+    if stats.lastError != nil, let errorDate = stats.lastErrorDate {
+        let text = tgeshkaGatewayErrorText(stats.lastErrorKind)
+        let recovered = stats.activeConnections > 0 && (stats.lastConnectedDate.map { $0 > errorDate } ?? false)
+        if recovered {
+            // Connected again after the error: a quiet note under the section.
+            recoveredErrorText = "Была ошибка \(tgeshkaClockText(errorDate)): \(text) Сейчас всё работает. [Подробнее]()"
+        } else {
+            entries.append(.lastError("Последняя ошибка, \(tgeshkaErrorTimeText(errorDate))", text))
+        }
     }
     entries.append(.reconnect("Переподключить"))
+    if let recoveredErrorText = recoveredErrorText {
+        entries.append(.lastErrorRecovered(recoveredErrorText))
+    }
 
     entries.append(.aboutHeader("О TGESHKA"))
     let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
@@ -274,6 +294,7 @@ public func tgeshkaSettingsController(sharedContext: SharedAccountContext, prese
     var dismissImpl: (() -> Void)?
     var endEditingImpl: (() -> Void)?
     var pushControllerImpl: ((ViewController) -> Void)?
+    var presentControllerImpl: ((ViewController) -> Void)?
 
     let save: () -> Void = {
         endEditingImpl?()
@@ -355,6 +376,21 @@ public func tgeshkaSettingsController(sharedContext: SharedAccountContext, prese
         pushControllerImpl?(tgeshkaWhatsNewController(sharedContext: sharedContext))
     })
 
+    arguments.openErrorDetails = {
+        let stats = TGeshkaGateway.shared.currentStats
+        guard stats.lastError != nil else {
+            return
+        }
+        let details = tgeshkaErrorDetailsText(stats: stats)
+        let text = tgeshkaGatewayErrorText(stats.lastErrorKind) + "\n\n" + details
+        presentControllerImpl?(textAlertController(sharedContext: sharedContext, title: "Ошибка шлюза", text: text, actions: [
+            TextAlertAction(type: .genericAction, title: "Скопировать", action: {
+                UIPasteboard.general.string = details
+            }),
+            TextAlertAction(type: .defaultAction, title: "Закрыть", action: {})
+        ], actionLayout: .vertical))
+    }
+
     let statsDisposable = (TGeshkaGateway.shared.statsSignal
     |> deliverOnMainQueue).start(next: { stats in
         updateState { current in
@@ -391,6 +427,9 @@ public func tgeshkaSettingsController(sharedContext: SharedAccountContext, prese
     }
     pushControllerImpl = { [weak controller] c in
         controller?.push(c)
+    }
+    presentControllerImpl = { [weak controller] c in
+        controller?.present(c, in: .window(.root))
     }
     return controller
 }
