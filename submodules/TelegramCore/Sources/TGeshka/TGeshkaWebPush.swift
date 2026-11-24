@@ -341,10 +341,20 @@ public final class TGeshkaWebPush {
             } else {
                 plain = decryptAes128gcm(body: body, key: key, auth: auth)
             }
-            if let plain = plain, let json = (try? JSONSerialization.jsonObject(with: plain)) as? [String: Any] {
+            if let plain = plain {
+                guard let json = (try? JSONSerialization.jsonObject(with: plain)) as? [String: Any] else {
+                    report(apnsToken: nil, stage: "nse", result: "not_json enc=\(encoding) bytes=\(plain.count)")
+                    return nil
+                }
+                // Only the names of the fields and the notification type go to the relay, never the values.
+                let inner = (json["data"] as? [String: Any]) ?? json
+                let locKey = inner["loc_key"] as? String ?? "none"
+                let keys = inner.keys.sorted().joined(separator: ",")
+                report(apnsToken: nil, stage: "nse", result: "ok enc=\(encoding) loc=\(locKey) keys=\(keys)")
                 return TGeshkaWebPushDecrypted(accountId: accountId, payload: apnsShapedPayload(json))
             }
         }
+        report(apnsToken: nil, stage: "nse", result: "decrypt_failed enc=\(encoding) salt=\(salt != nil) dh=\(serverPublic != nil) accounts=\(store.keys.count) bytes=\(body.count)")
         return nil
     }
 
