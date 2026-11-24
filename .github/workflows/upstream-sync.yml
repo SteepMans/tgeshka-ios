@@ -58,12 +58,12 @@ jobs:
             git checkout -q -b "sync/$TAG"
             git push -q origin "sync/$TAG"
             gh pr create --base main --head "sync/$TAG" --title "Upstream: слияние $TAG" \
-              --body "Новый релиз Telegram-iOS $TAG слит в main без конфликтов. Проверочная сборка запущена на ветке sync/$TAG."
+              --body "Новый релиз Telegram-iOS $TAG слит в main без конфликтов. Проверочная сборка запущена на ветке sync/$TAG. Перед мержем дописать в CHANGELOG-tgeshka.json пункт «Обновлено до Telegram $TAG»."
             gh workflow run tgeshka.yml --ref "sync/$TAG" -f mode=check
           else
             CONFLICTS=$(git diff --name-only --diff-filter=U | sed 's/^/- /')
             git merge --abort
             git push -q origin "refs/tags/$TAG:refs/heads/upstream/$TAG"
-            printf 'Новый релиз Telegram-iOS %s сливается в main с конфликтами, нужно разрешить вручную:\n\n%s\n' "$TAG" "$CONFLICTS" > body.md
+            printf 'Новый релиз Telegram-iOS %s сливается в main с конфликтами, нужно разрешить вручную:\n\n%s\n\nПеред мержем дописать в CHANGELOG-tgeshka.json пункт «Обновлено до Telegram %s».\n' "$TAG" "$CONFLICTS" "$TAG" > body.md
             gh pr create --base main --head "upstream/$TAG" --title "Upstream: слияние $TAG (конфликты)" --body-file body.md
           fi

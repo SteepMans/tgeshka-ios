@@ -1385,6 +1385,7 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
         })
         
         self.checkTGeshkaGatewayKey()
+        self.checkTGeshkaWhatsNew()
         
         let contextReadyDisposable = MetaDisposable()
         
@@ -2684,6 +2685,31 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
             authContext.rootController.view.endEditing(true)
         }
         self.mainWindow.present(controller, on: .root, blockInteraction: false, completion: {})
+    }
+
+    // TGeshka: once after an update, "What's new in X.Y.Z" over the chat list (not over the key or sign-in screens).
+    private func checkTGeshkaWhatsNew() {
+        guard let release = tgeshkaWhatsNewReleaseToShow() else {
+            return
+        }
+        let _ = (self.context.get()
+        |> filter { $0 != nil }
+        |> take(1)
+        |> delay(1.5, queue: Queue.mainQueue())
+        |> deliverOnMainQueue).start(next: { context in
+            guard let context = context, TGeshkaGateway.shared.hasKey else {
+                return
+            }
+            tgeshkaMarkWhatsNewShown(release)
+            let sharedContext = context.context.sharedContext
+            let alert = textAlertController(sharedContext: sharedContext, title: "Что нового в " + tgeshkaAppVersion(), text: tgeshkaWhatsNewText(release), actions: [
+                TextAlertAction(type: .genericAction, title: "Все изменения", action: {
+                    context.rootController.pushViewController(tgeshkaWhatsNewController(sharedContext: sharedContext))
+                }),
+                TextAlertAction(type: .defaultAction, title: "Закрыть", action: {})
+            ], actionLayout: .vertical)
+            sharedContext.presentGlobalController(alert, nil)
+        })
     }
 
     private func checkTGeshkaGatewayKey() {
