@@ -75,10 +75,9 @@ public final class TGeshkaWebPush {
         return (key, auth)
     }
 
-    /// The token for account.registerDevice(token_type: 10): {"endpoint", "keys": {"p256dh", "auth"}, "vapid": true}.
-    /// "vapid" is what Telegram Web A sends since November 2026 (telegram-tt #6317). A subscription
-    /// without it was accepted but never got a single post to the endpoint (23.11.2026): Telegram
-    /// seems to treat it as a legacy pre-VAPID, FCM-style subscription.
+    /// The token for account.registerDevice(token_type: 10): {"endpoint", "keys": {"p256dh", "auth"}}.
+    /// No "vapid": with it Telegram refuses the registration with APP_PUSH_APIKEY_MISSING (it needs
+    /// the app's VAPID key, which only Telegram Web has); without it pushes come as "aesgcm".
     static func subscriptionToken(accountId: Int64, endpoint: String) -> String? {
         guard case let (key, auth)? = keys(accountId: accountId) else {
             return nil
@@ -88,8 +87,7 @@ public final class TGeshkaWebPush {
             "keys": [
                 "p256dh": base64Url(key.publicKey.x963Representation),
                 "auth": base64Url(auth)
-            ],
-            "vapid": true
+            ]
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes]) else {
             return nil
