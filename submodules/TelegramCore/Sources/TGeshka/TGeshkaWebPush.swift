@@ -75,7 +75,10 @@ public final class TGeshkaWebPush {
         return (key, auth)
     }
 
-    /// The token for account.registerDevice(token_type: 10): {"endpoint", "keys": {"p256dh", "auth"}}.
+    /// The token for account.registerDevice(token_type: 10): {"endpoint", "keys": {"p256dh", "auth"}, "vapid": true}.
+    /// "vapid" is what Telegram Web A sends since November 2026 (telegram-tt #6317). A subscription
+    /// without it was accepted but never got a single post to the endpoint (23.11.2026): Telegram
+    /// seems to treat it as a legacy pre-VAPID, FCM-style subscription.
     static func subscriptionToken(accountId: Int64, endpoint: String) -> String? {
         guard case let (key, auth)? = keys(accountId: accountId) else {
             return nil
@@ -85,7 +88,8 @@ public final class TGeshkaWebPush {
             "keys": [
                 "p256dh": base64Url(key.publicKey.x963Representation),
                 "auth": base64Url(auth)
-            ]
+            ],
+            "vapid": true
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes]) else {
             return nil
@@ -337,10 +341,20 @@ public final class TGeshkaWebPush {
             } else {
                 plain = decryptAes128gcm(body: body, key: key, auth: auth)
             }
-            if let plain = plain, let json = (try? JSONSerialization.jsonObject(with: plain)) as? [String: Any] {
+            if let plain = plain {
+                guard let json = (try? JSONSerialization.jsonObject(with: plain)) as? [String: Any] else {
+                    report(apnsToken: nil, stage: "nse", result: "not_json enc=\(encoding) bytes=\(plain.count)")
+                    return nil
+                }
+                // Only the names of the fields and the notification type go to the relay, never the values.
+                let inner = (json["data"] as? [String: Any]) ?? json
+                let locKey = inner["loc_key"] as? String ?? "none"
+                let keys = inner.keys.sorted().joined(separator: ",")
+                report(apnsToken: nil, stage: "nse", result: "ok enc=\(encoding) loc=\(locKey) keys=\(keys)")
                 return TGeshkaWebPushDecrypted(accountId: accountId, payload: apnsShapedPayload(json))
             }
         }
+        report(apnsToken: nil, stage: "nse", result: "decrypt_failed enc=\(encoding) salt=\(salt != nil) dh=\(serverPublic != nil) accounts=\(store.keys.count) bytes=\(body.count)")
         return nil
     }
 
