@@ -100,8 +100,9 @@ public final class TGeshkaMembers {
         self.lock.unlock()
         self.queue.async {
             if self.timer == nil {
-                let timer = SwiftSignalKit.Timer(timeout: 60.0, repeat: true, completion: { [weak self] in
-                    self?.check(force: false)
+                let timer = SwiftSignalKit.Timer(timeout: 60.0, repeat: true, completion: {
+                    // The shared instance lives as long as the app.
+                    self.check(force: false)
                 }, queue: self.queue)
                 self.timer = timer
                 timer.start()
