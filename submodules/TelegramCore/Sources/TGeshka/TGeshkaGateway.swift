@@ -16,6 +16,20 @@ public struct TGeshkaGatewaySettings: Codable, Equatable {
     }
 }
 
+/// What went wrong with the gateway, for a readable explanation in Settings -> TGeshka.
+public enum TGeshkaGatewayErrorKind: Equatable {
+    case noKey
+    case badUrl
+    case timeout
+    case refused
+    case network
+    case tls
+    case dns
+    /// The gateway closed the WebSocket with this code (SteepMans/api-gateway, docs/tg-protocol-v1.md).
+    case closed(Int)
+    case other
+}
+
 public struct TGeshkaGatewayStats: Equatable {
     public var activeConnections: Int
     public var openedConnections: Int
@@ -25,6 +39,7 @@ public struct TGeshkaGatewayStats: Equatable {
     public var lastError: String?
     public var lastErrorDate: Date?
     public var lastConnectedDate: Date?
+    public var lastErrorKind: TGeshkaGatewayErrorKind? = nil
 }
 
 public struct TGeshkaGatewayInfo: Equatable {
@@ -213,10 +228,12 @@ public final class TGeshkaGateway {
         self.stats.bytesOut += Int64(outgoing)
     }
 
-    func reportError(_ text: String) {
+    /// technical: the exact error for "Copy" in the settings, the kind gives the readable text.
+    func reportError(_ kind: TGeshkaGatewayErrorKind, technical: String) {
         self.lock.lock()
         defer { self.lock.unlock() }
-        self.stats.lastError = text
+        self.stats.lastError = technical
+        self.stats.lastErrorKind = kind
         self.stats.lastErrorDate = Date()
     }
 

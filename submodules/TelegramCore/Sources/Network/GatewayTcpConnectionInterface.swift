@@ -123,12 +123,12 @@ final class GatewayTcpConnectionInterface: NSObject, MTTcpConnectionInterface {
             let settings = gateway.settings
             let token = settings.token
             if token.isEmpty {
-                gateway.reportError("Нет ключа доступа")
+                gateway.reportError(.noKey, technical: "no gateway access key")
                 self.cancelWithError(error: nil, reason: "no gateway key")
                 return
             }
             guard let url = Impl.streamUrl(base: gateway.effectiveUrl, host: host, port: port) else {
-                gateway.reportError("Неверный адрес шлюза")
+                gateway.reportError(.badUrl, technical: "bad gateway url")
                 self.cancelWithError(error: nil, reason: "bad gateway url")
                 return
             }
@@ -183,7 +183,7 @@ final class GatewayTcpConnectionInterface: NSObject, MTTcpConnectionInterface {
                     return
                 }
                 self.connectTimeoutTimer = nil
-                TGeshkaGateway.shared.reportError("Шлюз не ответил вовремя")
+                TGeshkaGateway.shared.reportError(.timeout, technical: "connect timeout after \(Int(max(timeout, 15.0))) s")
                 self.cancelWithError(error: nil, reason: "connect timeout")
             }, queue: self.queue)
             self.connectTimeoutTimer?.start()
@@ -219,58 +219,48 @@ final class GatewayTcpConnectionInterface: NSObject, MTTcpConnectionInterface {
                 self.receiveNext()
             case let .waiting(error):
                 // The handshake was refused (404 for a wrong key) or there is no route.
-                TGeshkaGateway.shared.reportError(Impl.describe(error))
+                let described = Impl.describe(error)
+                TGeshkaGateway.shared.reportError(described.kind, technical: "waiting: " + described.technical)
                 self.cancelWithError(error: error, reason: "waiting")
             case let .failed(error):
-                TGeshkaGateway.shared.reportError(Impl.describe(error))
+                let described = Impl.describe(error)
+                TGeshkaGateway.shared.reportError(described.kind, technical: "failed: " + described.technical)
                 self.cancelWithError(error: error, reason: "connection failed")
             default:
                 break
             }
         }
 
-        private static func describe(_ error: NWError) -> String {
+        // if-case chains, not switches: NWError and CloseCode may gain cases in a new SDK, and both a missing
+        // and an unreachable default are warnings, which are errors here.
+        private static func describe(_ error: NWError) -> (kind: TGeshkaGatewayErrorKind, technical: String) {
             if case let .posix(code) = error {
-                if code == .ECONNREFUSED {
-                    return "Шлюз отклонил соединение"
-                }
-                return "Сеть: \(code)"
+                return (code == .ECONNREFUSED ? .refused : .network, "POSIX \(code.rawValue): \(error.debugDescription)")
             }
             if case let .tls(status) = error {
-                return "TLS: \(status)"
+                return (.tls, "TLS OSStatus \(status): \(error.debugDescription)")
             }
             if case let .dns(code) = error {
-                return "DNS: \(code)"
+                return (.dns, "DNS \(code): \(error.debugDescription)")
             }
-            return "\(error)"
+            return (.other, error.debugDescription)
         }
 
-        private static func describeClose(_ code: NWProtocolWebSocket.CloseCode) -> (text: String, isError: Bool) {
-            switch code {
-            case .protocolCode(.normalClosure):
-                return ("DC закрыл соединение", false)
-            case .protocolCode(.goingAway):
-                return ("Шлюз перезапускается", false)
-            case let .privateCode(value):
-                switch value {
-                case 4401:
-                    return ("Ключ доступа отозван", true)
-                case 4429:
-                    return ("Превышен лимит соединений ключа", true)
-                case 4502:
-                    return ("Заграничные узлы шлюза недоступны", true)
-                case 4504:
-                    return ("Шлюз не смог подключиться к DC", true)
-                case 4400:
-                    return ("Шлюз не разобрал начало потока", true)
-                case 4408:
-                    return ("Шлюз закрыл простаивающее соединение", true)
-                default:
-                    return ("Шлюз закрыл соединение (\(value))", true)
+        /// nil: a normal close (the DC or a gateway restart), not an error.
+        private static func closeErrorCode(_ code: NWProtocolWebSocket.CloseCode) -> Int? {
+            if case let .protocolCode(value) = code {
+                if value == .normalClosure || value == .goingAway {
+                    return nil
                 }
-            default:
-                return ("Шлюз закрыл соединение (\(code))", true)
+                return Int(value.rawValue)
             }
+            if case let .privateCode(value) = code {
+                return Int(value)
+            }
+            if case let .applicationCode(value) = code {
+                return Int(value)
+            }
+            return -1
         }
 
         private func receiveNext() {
@@ -284,10 +274,9 @@ final class GatewayTcpConnectionInterface: NSObject, MTTcpConnectionInterface {
                 if let metadata = context?.protocolMetadata(definition: NWProtocolWebSocket.definition) as? NWProtocolWebSocket.Metadata {
                     switch metadata.opcode {
                     case .close:
-                        let close = Impl.describeClose(metadata.closeCode)
                         Logger.shared.log("GwWs", "\(self.logId) close from gateway: \(metadata.closeCode)")
-                        if close.isError {
-                            TGeshkaGateway.shared.reportError(close.text)
+                        if let code = Impl.closeErrorCode(metadata.closeCode) {
+                            TGeshkaGateway.shared.reportError(.closed(code), technical: "WebSocket close \(code) from the gateway (\(metadata.closeCode))")
                         }
                         self.cancelWithError(error: nil, reason: "gateway close")
                         return
@@ -305,7 +294,8 @@ final class GatewayTcpConnectionInterface: NSObject, MTTcpConnectionInterface {
                     self.received(data)
                 }
                 if let error = error {
-                    TGeshkaGateway.shared.reportError(Impl.describe(error))
+                    let described = Impl.describe(error)
+                    TGeshkaGateway.shared.reportError(described.kind, technical: "receive: " + described.technical)
                     self.cancelWithError(error: error, reason: "receive failed")
                     return
                 }
