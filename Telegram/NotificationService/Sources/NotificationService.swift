@@ -517,6 +517,8 @@ private struct NotificationContent: CustomStringConvertible {
     var userInfo: [AnyHashable: Any] = [:]
     var attachments: [UNNotificationAttachment] = []
     var silent = false
+    /// TGeshka: a push for a muted chat, delivered without sound or lighting up the screen.
+    var passive = false
     /// The account this notification was delivered to, set only while more than one is signed
     /// in (see `notificationRecipientAccountName`).
     var recipientAccountName: String?
@@ -688,6 +690,9 @@ private struct NotificationContent: CustomStringConvertible {
         }
         if let sound = self.sound {
             content.sound = UNNotificationSound(named: UNNotificationSoundName(rawValue: sound))
+        }
+        if self.passive {
+            content.interruptionLevel = .passive
         }
         if let badge = self.badge {
             content.badge = badge as NSNumber
@@ -1313,6 +1318,9 @@ private final class NotificationServiceHandler {
                                 if let silentValue = Int(silentString), silentValue != 0 {
                                     content.silent = true
                                 }
+                            }
+                            if tgeshkaPush != nil, payloadJson["tgeshka_muted"] as? String == "1" {
+                                content.passive = true
                             }
                             if var attachmentDataString = payloadJson["attachb64"] as? String {
                                 attachmentDataString = attachmentDataString.replacingOccurrences(of: "-", with: "+")
@@ -2135,7 +2143,14 @@ private final class NotificationServiceHandler {
                                                         case let .idBased(maxIncomingReadId, _, _, _, _):
                                                             if maxIncomingReadId >= messageId.id {
                                                                 Logger.shared.log("NotificationService \(episode)", "maxIncomingReadId: \(maxIncomingReadId), messageId: \(messageId.id), skipping")
-                                                                content = NotificationContent(isLockedMessage: nil)
+                                                                if tgeshkaPush != nil {
+                                                                    // TGeshka: without the filtering entitlement empty content brings
+                                                                    // back the relay's placeholder; the read message is shown quietly.
+                                                                    content.passive = true
+                                                                    content.sound = nil
+                                                                } else {
+                                                                    content = NotificationContent(isLockedMessage: nil)
+                                                                }
                                                             } else {
                                                                 Logger.shared.log("NotificationService \(episode)", "maxIncomingReadId: \(maxIncomingReadId), messageId: \(messageId.id), not skipping")
                                                             }
@@ -2159,7 +2174,7 @@ private final class NotificationServiceHandler {
                                             var content = content
                                             
                                             var parsedMedia: Media?
-                                            if let messageId, let message = transaction.getMessage(messageId), !message.containsSecretMedia, !message.attributes.contains(where: { $0 is MediaSpoilerMessageAttribute }) {
+                                            if let messageId, payloadJson["tgeshka_nopreview"] == nil, let message = transaction.getMessage(messageId), !message.containsSecretMedia, !message.attributes.contains(where: { $0 is MediaSpoilerMessageAttribute }) {
                                                 if let media = message.media.first {
                                                     parsedMedia = media
                                                 }
@@ -2688,6 +2703,23 @@ private final class NotificationServiceHandler {
                                 })
                             })
                         }
+                    } else if tgeshkaPush != nil, payloadJson["loc-key"] == nil, let alert = (payloadJson["aps"] as? [String: Any])?["alert"] as? [String: Any] {
+                        // TGeshka: a message push without a chat to poll still shows its own text
+                        // rather than the relay's placeholder.
+                        TGeshkaWebPush.report(apnsToken: nil, stage: "nse_fallback", result: "no_peer")
+                        var content = NotificationContent(isLockedMessage: isLockedMessage)
+                        content.recipientAccountName = recipientAccountName
+                        content.title = alert["title"] as? String
+                        content.body = alert["body"] as? String
+                        if let aps = payloadJson["aps"] as? [String: Any] {
+                            content.sound = aps["sound"] as? String
+                            content.threadId = aps["thread-id"] as? String
+                        }
+                        content.passive = payloadJson["tgeshka_muted"] as? String == "1"
+                        content.userInfo["accountId"] = "\(recordId.int64)"
+                        updateCurrentContent(content)
+
+                        completed()
                     } else {
                         let content = NotificationContent(isLockedMessage: nil)
                         updateCurrentContent(content)
