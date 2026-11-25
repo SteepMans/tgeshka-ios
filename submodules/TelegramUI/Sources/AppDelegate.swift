@@ -2744,7 +2744,26 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
         })
     }
 
-    private func openUrl(url: URL) {
+    // TGeshka: tgeshka:// is our copy of tg:// that iOS never hands to the official app (it also claims tg://).
+    // tgeshka://t.me/<path> (a t.me link with "https" replaced, e.g. by a Shortcut) opens as https://t.me/<path>,
+    // tgeshka://resolve?domain=... and the other tg:// commands open as tg://. tgeshka://gateway stays the key link.
+    private func tgeshkaAliasUrl(_ url: URL) -> URL {
+        guard url.scheme?.lowercased() == "tgeshka", let host = url.host?.lowercased(), host != "gateway" else {
+            return url
+        }
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url
+        }
+        if host == "t.me" || host == "telegram.me" || host == "telegram.dog" || host.hasSuffix(".t.me") {
+            components.scheme = "https"
+        } else {
+            components.scheme = "tg"
+        }
+        return components.url ?? url
+    }
+
+    private func openUrl(url originalUrl: URL) {
+        let url = self.tgeshkaAliasUrl(originalUrl)
         let _ = (self.sharedContextPromise.get()
         |> take(1)
         |> mapToSignal { sharedApplicationContext -> Signal<(SharedAccountContextImpl, AuthorizedApplicationContext?, UnauthorizedApplicationContext?), NoError> in
