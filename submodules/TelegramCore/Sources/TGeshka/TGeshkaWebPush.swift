@@ -167,7 +167,7 @@ public final class TGeshkaWebPush {
     /// Tells the relay how a step of the subscription went (Telegram's answer to
     /// registerDevice and the like): the relay logs it next to the deliveries, so a push
     /// that never comes can be told from a subscription Telegram refused. Fire and forget.
-    static func report(apnsToken: Data?, stage: String, result: String) {
+    public static func report(apnsToken: Data?, stage: String, result: String) {
         let gateway = TGeshkaGateway.shared
         let settings = gateway.settings
         guard !settings.token.isEmpty, var components = URLComponents(string: gateway.effectiveUrl) else {
@@ -344,21 +344,85 @@ public final class TGeshkaWebPush {
                     report(apnsToken: nil, stage: "nse", result: "not_json enc=\(encoding) bytes=\(plain.count)")
                     return nil
                 }
-                // Only the names of the fields and the notification type go to the relay, never the values.
+                // Only the names of the fields, the notification type and on/off flags go to the
+                // relay, never the texts or the ids.
                 let inner = (json["data"] as? [String: Any]) ?? json
                 let locKey = inner["loc_key"] as? String ?? "none"
                 let keys = inner.keys.sorted().joined(separator: ",")
-                report(apnsToken: nil, stage: "nse", result: "ok enc=\(encoding) loc=\(locKey) keys=\(keys)")
-                return TGeshkaWebPushDecrypted(accountId: accountId, payload: apnsShapedPayload(json))
+                let customKeys = ((inner["custom"] as? [String: Any])?.keys.sorted() ?? []).joined(separator: ",")
+                let shaped = apnsShapedPayload(json)
+                let alert = (shaped["aps"] as? [String: Any])?["alert"] as? [String: Any]
+                let hasTitle = !((alert?["title"] as? String) ?? "").isEmpty
+                let hasBody = !((alert?["body"] as? String) ?? "").isEmpty
+                let thread = shaped["tgeshka_peer"] as? String ?? "none"
+                let mute = flagString(inner["mute"]) ?? "-"
+                let silent = flagString((inner["custom"] as? [String: Any])?["silent"]) ?? "-"
+                report(apnsToken: nil, stage: "nse", result: "ok enc=\(encoding) loc=\(locKey) keys=\(keys) custom=\(customKeys) peer=\(thread) title=\(hasTitle) body=\(hasBody) mute=\(mute) silent=\(silent)")
+                return TGeshkaWebPushDecrypted(accountId: accountId, payload: shaped)
             }
         }
         report(apnsToken: nil, stage: "nse", result: "decrypt_failed enc=\(encoding) salt=\(salt != nil) dh=\(serverPublic != nil) accounts=\(store.keys.count) bytes=\(body.count)")
         return nil
     }
 
+    /// "0"/"1" of a field Telegram sends either as a string or as a number.
+    static func flagString(_ value: Any?) -> String? {
+        if let string = value as? String {
+            return string
+        } else if let number = value as? NSNumber {
+            return number.stringValue
+        }
+        return nil
+    }
+
+    /// Notification types the notification service handles as service pushes by their
+    /// top-level "loc-key" (Telegram's APNs payload carries it only for these). Message
+    /// pushes must not get it: the service then takes the service-push branch, finds no
+    /// action and the system shows the relay's placeholder instead of the message.
+    static let serviceLocKeys: Set<String> = [
+        "SESSION_REVOKE",
+        "MESSAGE_MUTED",
+        "MESSAGE_DELETED",
+        "READ_REACTION",
+        "READ_HISTORY",
+        "READ_STORIES",
+        "CONF_CALL_REQUEST",
+        "CONF_VIDEOCALL_REQUEST"
+    ]
+
+    /// Body for a message without text, by the kind of its attachment.
+    private static func attachmentBody(locKey: String) -> String? {
+        let kinds: [(String, String)] = [
+            ("_PHOTO_SECRET", "Исчезающее фото"),
+            ("_VIDEO_SECRET", "Исчезающее видео"),
+            ("_PHOTOS", "Фотографии"),
+            ("_VIDEOS", "Видео"),
+            ("_PHOTO", "Фотография"),
+            ("_VIDEO", "Видео"),
+            ("_ROUND", "Видеосообщение"),
+            ("_AUDIO", "Голосовое сообщение"),
+            ("_DOCS", "Файлы"),
+            ("_DOC", "Файл"),
+            ("_STICKER", "Стикер"),
+            ("_GIF", "GIF"),
+            ("_CONTACT", "Контакт"),
+            ("_GEOLIVE", "Трансляция геопозиции"),
+            ("_GEO", "Геопозиция"),
+            ("_POLL", "Опрос"),
+            ("_QUIZ", "Викторина"),
+            ("_FWDS", "Пересланные сообщения"),
+            ("_GAME", "Игра"),
+            ("_INVOICE", "Счёт")
+        ]
+        for (suffix, body) in kinds where locKey.hasSuffix(suffix) {
+            return body
+        }
+        return nil
+    }
+
     /// Web Push data comes as {"loc_key", "loc_args", "custom": {...}, "title",
     /// "description", ...}; the notification service reads the APNs shape
-    /// ({"aps": {"alert": ...}, "loc-key", "msg_id", "from_id", ...}).
+    /// ({"aps": {"alert": ..., "thread-id"}, "msg_id", "from_id", ...}).
     static func apnsShapedPayload(_ object: [String: Any]) -> [String: Any] {
         // The API docs show the notification wrapped as {"data": {...}}; accept both shapes.
         let json: [String: Any]
@@ -380,33 +444,68 @@ public final class TGeshkaWebPush {
                 }
             }
         }
-        if let locKey = json["loc_key"] as? String {
+        let locKey = json["loc_key"] as? String ?? ""
+        if serviceLocKeys.contains(locKey) {
             result["loc-key"] = locKey
         }
         if let locArgs = json["loc_args"] {
             result["loc-args"] = locArgs
+        }
+        // The chat the message belongs to: groups the notifications of one chat together.
+        var peer: String?
+        if let channelId = flagString(result["channel_id"]) {
+            peer = "-100\(channelId)"
+        } else if let chatId = flagString(result["chat_id"]) {
+            peer = "-\(chatId)"
+        } else if let fromId = flagString(result["from_id"]) {
+            peer = fromId
+        } else if let encryptionId = flagString(result["encryption_id"]) {
+            peer = "e\(encryptionId)"
+        }
+        if let peer = peer {
+            result["tgeshka_peer"] = peer
+        }
+        // Telegram hides the text itself when the chat or the account hides previews
+        // (MESSAGE_NOTEXT and the like); the fetched message must not bring it back.
+        if locKey.hasSuffix("_NOTEXT") {
+            result["tgeshka_nopreview"] = "1"
+            result["_ddie"] = "1"
         }
         if result["aps"] == nil {
             var alert: [String: Any] = [:]
             let args = json["loc_args"] as? [String] ?? []
             if let title = json["title"] as? String, !title.isEmpty {
                 alert["title"] = title
+            } else if locKey.hasPrefix("CHAT_"), args.count > 1 {
+                alert["title"] = args[1]
             } else if let first = args.first {
                 alert["title"] = first
             }
             if let description = json["description"] as? String, !description.isEmpty {
                 alert["body"] = description
-            } else if args.count > 1 {
-                alert["body"] = args.dropFirst().joined(separator: ": ")
+            } else if let message = json["message"] as? String, !message.isEmpty {
+                alert["body"] = message
+            } else if let body = attachmentBody(locKey: locKey) {
+                alert["body"] = body
             } else {
                 alert["body"] = "Новое сообщение"
             }
             var aps: [String: Any] = ["alert": alert, "mutable-content": 1]
-            if json["silent"] as? String != "1" {
+            // A muted chat comes with "mute": "1" (Telegram Web drops such a push; an extension
+            // without the filtering entitlement cannot, so it is delivered quietly), a message
+            // sent without sound with custom "silent": "1".
+            let muted = flagString(json["mute"]) == "1"
+            if muted {
+                result["tgeshka_muted"] = "1"
+            }
+            if !muted && flagString(result["silent"]) != "1" {
                 aps["sound"] = "default"
             }
-            if let badge = json["badge"] as? String, let value = Int(badge) {
+            if let badge = flagString(json["badge"]), let value = Int(badge) {
                 aps["badge"] = value
+            }
+            if let peer = peer {
+                aps["thread-id"] = peer
             }
             result["aps"] = aps
         }
