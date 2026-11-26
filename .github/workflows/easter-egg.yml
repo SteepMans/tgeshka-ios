@@ -1,0 +1,40 @@
+name: Easter egg tests
+
+# Unit test of the easter egg (пасхалка): Foundation-only Swift, Linux container, no macOS minutes.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - tgeshka-easter-egg.txt
+      - submodules/TelegramCore/Sources/TGeshka/TGeshkaEasterEggRules.swift
+      - Tests/TGeshkaEasterEgg/**
+      - .github/workflows/easter-egg.yml
+  pull_request:
+    paths:
+      - tgeshka-easter-egg.txt
+      - submodules/TelegramCore/Sources/TGeshka/TGeshkaEasterEggRules.swift
+      - Tests/TGeshkaEasterEgg/**
+      - .github/workflows/easter-egg.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container: swift:6.0
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            tgeshka-easter-egg.txt
+            submodules/TelegramCore/Sources/TGeshka
+            Tests/TGeshkaEasterEgg
+      - name: Build and run
+        run: |
+          swiftc -swift-version 6 -warnings-as-errors \
+            submodules/TelegramCore/Sources/TGeshka/TGeshkaEasterEggRules.swift \
+            Tests/TGeshkaEasterEgg/main.swift -o easter_egg_tests
+          ./easter_egg_tests tgeshka-easter-egg.txt

@@ -1932,6 +1932,8 @@ ios_application(
         #":DefaultAppIcon",
         # TGeshka: "What's new" in Settings → TGeshka (SettingsUI TGeshkaWhatsNew.swift).
         "//:CHANGELOG-tgeshka.json",
+        # TGeshka: easter egg rules (TelegramCore TGeshkaEasterEgg.swift).
+        "//:tgeshka-easter-egg.txt",
     ],
     frameworks = [
         ":MtProtoKitFramework",
