@@ -296,3 +296,19 @@ Re-apply these after upgrading; `git diff 55b3934a98 -- third-party/quickjs-ng/q
     - Pinned by `tests/quickjs_host_test.c`, `test_dumps_never_follow_ndebug`: in the suite's default build (no
       `NDEBUG`) `JS_SetDumpFlags(rt, ~0)` keeps nothing and `JS_GetDumpFlags` answers 0, which is what both do with the
       dumps compiled out. Before the change it answered the 24 bits of the flags field (the RED run).
+13. **Security backports from Telegram's quickjs fork** (2026-11-27, TGeshka).
+    - What: the memory-safety and parser fixes of `TelegramMessenger/quickjs` from 2026-11-06 to 2026-11-13 (branch
+      `master` from `53dd884` to `ca3594d` and branch `tdesktop-fixes` to `fbc91d8`), cherry-picked onto this copy
+      one by one, the engine sources only (`quickjs.c`, `libregexp.c`, `libunicode.c`, `cutils.h`). Among them the
+      parser's `ARG_SCOPE_END` index (`ca3594d`), the RegExp bytecode freed under `lastIndex` coercion (`2b62af1`,
+      `c8af6d2`), the closure-variable and mapped-arguments truncations (`3e236cb`, `8f0d3b6`, `e9a41e4`), the
+      `Map.clear` and `FinalizationRegistry.unregister` use-after-frees (`3ad65ad`, `7ca4ac5`), the async generator
+      re-entry (`11a4fba`, `4a8f435`) and the interrupt polls in the Array, String and TypedArray loops.
+    - Left out: `b06baf9` (`Array.fromAsync` without `.call` lookups) needs the precompiled
+      `builtin-array-fromasync.h` regenerated; it is a conformance fix, not a memory-safety one. The fork's
+      performance commits of 2026-10-12 are not taken: where a fix was written against them (`string_indexof`,
+      `js_object_inline_prop`), it is adapted to this copy's v0.17.0 code.
+    - `js_uncatchable_pending(ctx)`, which the backports ask, is defined on change 10's test: an exception is pending
+      and `js_is_uncatchable_exception(rt)` says it escapes every catch.
+    - Checked: `:QuickJSHostTests` and `:QuickJSSmokeTests` pass; the fork's regression scripts for these fixes
+      (`tests/*.js` of `tdesktop-fixes`) crash or fail on the previous copy and pass on this one.
